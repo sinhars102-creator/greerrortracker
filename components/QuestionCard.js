@@ -72,13 +72,22 @@ export default function QuestionCard({ entry, mode, onBlanksExtracted, onFinish,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Sentence Equivalence is always exactly 2. "Select all that apply" /
+  // checkbox questions (b.multiSelect) allow any number, at least 1 — fall
+  // back to treating >1 correct answers as checkbox-style for blanks cached
+  // before multiSelect started being extracted. Everything else is a single
+  // pick (radio-style).
+  const blankIsCheckbox = (b) => entry.subtype !== "Sentence Equivalence" && (b.multiSelect || (b.correctIndices || []).length > 1);
+
   const toggleSelect = (bi, i) => {
     if (checked || gradeResult) return;
-    const isMultiSelect = entry.subtype === "Sentence Equivalence";
+    const isSentenceEquivalence = entry.subtype === "Sentence Equivalence";
+    const b = blanks[bi];
     setSelections((prev) => {
       const cur = prev[bi] || [];
       let next;
-      if (isMultiSelect) next = cur.includes(i) ? cur.filter((x) => x !== i) : (cur.length < 2 ? [...cur, i] : cur);
+      if (isSentenceEquivalence) next = cur.includes(i) ? cur.filter((x) => x !== i) : (cur.length < 2 ? [...cur, i] : cur);
+      else if (blankIsCheckbox(b)) next = cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i];
       else next = [i];
       return { ...prev, [bi]: next };
     });
@@ -199,6 +208,9 @@ export default function QuestionCard({ entry, mode, onBlanksExtracted, onFinish,
         return (
           <div key={bi} style={{ marginBottom: 20 }}>
             {b.label && <div style={{ fontSize: 12, color: accent, fontWeight: 700, marginBottom: 8 }}>{b.label}</div>}
+            {blankIsCheckbox(b) && (
+              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".03em" }}>Select all that apply</div>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: mode === "deep" && allSelected ? 12 : 0 }}>
               {b.options.map((opt, i) => {
                 const { border, bg } = optionColors(b, bi, i);

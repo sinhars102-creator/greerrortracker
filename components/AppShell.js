@@ -12,6 +12,7 @@ const TABS = [
   { href: "/entries", label: "All Entries" },
   { href: "/word-traps", label: "Word Traps" },
   { href: "/quant-traps", label: "Quant Traps" },
+  { href: "/vocab", label: "Vocab Review" },
   { href: "/focus-list", label: "Focus List" },
   { href: "/work-on-this", label: "Work On This" },
   { href: "/error-buckets", label: "Error Buckets" },

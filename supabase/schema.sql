@@ -119,6 +119,67 @@ create policy "Users manage their own insights"
   on insights for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ============================================================
+-- VOCAB REVIEW (spaced-repetition vocab quizzing, separate from the
+-- mistake-log review cycle — the base word list lives in code, this
+-- table only holds user-added words)
+-- ============================================================
+create table if not exists vocab_words (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  word text not null,
+  meaning text not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists vocab_words_user_word_idx on vocab_words(user_id, word);
+
+alter table vocab_words enable row level security;
+create policy "Users manage their own vocab words"
+  on vocab_words for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ============================================================
+-- VOCAB PROGRESS (per-word spaced-repetition state)
+-- ============================================================
+create table if not exists vocab_progress (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  word text not null,
+  bucket text not null check (bucket in ('learnt', 'revise', 'learning')),
+  streak int not null default 0,
+  review_count int not null default 0,
+  last_reviewed timestamptz,
+  next_due_at timestamptz not null default now(),
+  hook text not null default '',
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists vocab_progress_user_word_idx on vocab_progress(user_id, word);
+
+alter table vocab_progress enable row level security;
+create policy "Users manage their own vocab progress"
+  on vocab_progress for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ============================================================
+-- VOCAB GROUPS (saved clusters of similar-meaning words, reviewable
+-- together as their own session)
+-- ============================================================
+create table if not exists vocab_groups (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  words text[] not null default '{}',
+  source text not null default 'user', -- 'user' | 'auto'
+  created_at timestamptz not null default now()
+);
+
+-- for installs that already ran the create table above before `source` existed
+alter table vocab_groups add column if not exists source text not null default 'user';
+
+alter table vocab_groups enable row level security;
+create policy "Users manage their own vocab groups"
+  on vocab_groups for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ============================================================
 -- updated_at auto-touch trigger for entries
 -- ============================================================
 create or replace function touch_updated_at()
