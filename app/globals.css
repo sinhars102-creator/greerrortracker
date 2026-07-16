@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #14161B;
+  --panel: #1E212A;
+  --panel2: #242833;
+  --border: #2C3038;
+  --text: #EDEEF0;
+  --muted: #8B90A0;
+  --faint: #585D6B;
+  --amber: #E8A33D;
+  --red: #C1554B;
+  --sage: #6B9080;
+  --quant: #5E8FB5;
+  --verbal: #B58A5E;
+  --repeat: #C97AC6;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+.serif { font-family: 'Iowan Old Style', Georgia, ui-serif, serif; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.btn {
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--text);
+  padding: 8px 14px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: border-color .15s, background .15s;
+}
+.btn:hover { border-color: var(--faint); background: #2A2F3B; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--amber); color: #14161B; border-color: var(--amber); font-weight: 600; }
+.btn-primary:hover { background: #f0b04f; }
+.btn-sage { background: var(--sage); color: #101512; border-color: var(--sage); font-weight: 600; }
+.btn-red { background: transparent; color: var(--red); border-color: var(--red); }
+
+.pill {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  display: inline-block;
+  font-weight: 600;
+}
+
+input, textarea, select {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 9px 10px;
+  font-size: 13.5px;
+  width: 100%;
+}
+input:focus, textarea:focus, select:focus {
+  outline: 2px solid var(--amber);
+  outline-offset: -1px;
+  border-color: var(--amber);
+}
+
+label {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 5px;
+}
