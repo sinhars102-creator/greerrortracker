@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { Plus, Power } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 const TABS = [
@@ -37,7 +38,21 @@ export default function AppShell({ children }) {
             <div style={{ fontSize: 11, color: "var(--faint)", letterSpacing: ".12em", textTransform: "uppercase", marginBottom: 4 }}>GRE · Error Ledger</div>
             <h1 className="serif" style={{ margin: 0, fontSize: 26, fontWeight: 600 }}>Mistake Log</h1>
           </div>
-          <button className="btn" style={{ fontSize: 12, padding: "6px 12px" }} onClick={signOut}>Sign out</button>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <Link href="/log" className="btn btn-primary" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
+              <Plus size={15} strokeWidth={2.5} />
+              Log Mistake
+            </Link>
+            <button
+              className="btn"
+              onClick={signOut}
+              title="Sign out"
+              aria-label="Sign out"
+              style={{ padding: 8, display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
+              <Power size={15} />
+            </button>
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 20, marginBottom: 24, borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>

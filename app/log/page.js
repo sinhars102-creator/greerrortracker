@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import AppShell from "@/components/AppShell";
+import ImageLightbox from "@/components/ImageLightbox";
 import { createClient } from "@/lib/supabase/client";
 import { createEntry, updateEntry, uploadScreenshot, compressImageDataUrl, dataUrlToBlobAndParts, listEntries, findWordTrapByWord, createWordTrap, findQuantTrapByName, createQuantTrap } from "@/lib/entries";
 
@@ -16,6 +17,7 @@ export default function LogPage() {
   const [submitting, setSubmitting] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
   const [rcQuestions, setRcQuestions] = useState([]);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
   const fileRef = useRef(null);
   const rcFileRef = useRef(null);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -342,7 +344,8 @@ export default function LogPage() {
             {rcQuestions.map((q, i) => (
               <div key={q.localId} className="card" style={{ padding: 14, marginBottom: 14, background: "var(--panel2)" }}>
                 <div style={{ display: "flex", gap: 14 }}>
-                  <img src={q.imageDataUrl} alt={`Question ${i + 1}`} style={{ width: 120, height: 90, objectFit: "cover", borderRadius: 4, flexShrink: 0 }} />
+                  <img src={q.imageDataUrl} alt={`Question ${i + 1}`} onClick={() => setLightboxSrc(q.imageDataUrl)}
+                    style={{ width: 120, height: 90, objectFit: "cover", borderRadius: 4, flexShrink: 0, cursor: "zoom-in" }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                       <div style={{ fontSize: 12, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".04em" }}>Question {i + 1}</div>
@@ -386,7 +389,8 @@ export default function LogPage() {
                 <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => handleFile(e.target.files[0])} />
                 {imageDataUrl ? (
                   <div>
-                    <img src={imageDataUrl} alt="Pasted question" style={{ maxWidth: "100%", maxHeight: 240, borderRadius: 4 }} />
+                    <img src={imageDataUrl} alt="Pasted question" onClick={() => setLightboxSrc(imageDataUrl)}
+                      style={{ maxWidth: "100%", maxHeight: 240, borderRadius: 4, cursor: "zoom-in" }} />
                     <div style={{ marginTop: 10, display: "flex", gap: 8, justifyContent: "center" }}>
                       <button className="btn" onClick={() => fileRef.current?.click()} disabled={submitting}>Replace</button>
                       <button className="btn btn-red" onClick={() => setImageDataUrl(null)} disabled={submitting}>Remove</button>
@@ -433,6 +437,7 @@ export default function LogPage() {
           </>
         )}
       </div>
+      <ImageLightbox src={lightboxSrc} alt="Full-size screenshot" onClose={() => setLightboxSrc(null)} />
     </AppShell>
   );
 }
