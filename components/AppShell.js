@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Power, Play } from "lucide-react";
+import { Plus, Power, Play, BookOpen } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 const TABS = [
@@ -42,6 +42,10 @@ export default function AppShell({ children }) {
             <Link href="/practice" className="btn" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
               <Play size={15} strokeWidth={2.5} />
               Practice
+            </Link>
+            <Link href="/vocab" className="btn" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
+              <BookOpen size={15} strokeWidth={2.5} />
+              Vocab Review
             </Link>
             <Link href="/log" className="btn btn-primary" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
               <Plus size={15} strokeWidth={2.5} />

@@ -21,10 +21,38 @@ function shuffleGrouped(entries) {
   return shuffle(groupForSequentialPractice(entries)).flat();
 }
 
+// Practice sessions are rarely finished in one sitting — progress is saved
+// to localStorage per section so "Continue" can pick up later, independent
+// of Quant vs Verbal.
+const PROGRESS_KEY = (section) => `gre-practice-progress:${section}`;
+
+function loadProgress(section) {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(PROGRESS_KEY(section));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveProgress(section, data) {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(PROGRESS_KEY(section), JSON.stringify(data)); } catch {}
+}
+
+function clearProgress(section) {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.removeItem(PROGRESS_KEY(section)); } catch {}
+}
+
 export default function PracticePage() {
   const [entries, setEntries] = useState(null);
   const [section, setSection] = useState("All");
-  const [session, setSession] = useState(null); // { queue: [entry,...], index, correct, total, streak, bestStreak }
+  const [session, setSession] = useState(null); // { section, queue: [entry,...], index, correct, total, streak, bestStreak }
+  // Lazy initializer (not an effect) so this reads localStorage once on
+  // mount without a setState-in-effect render cascade.
+  const [savedProgress, setSavedProgress] = useState(() => ({ Quant: loadProgress("Quant"), Verbal: loadProgress("Verbal") }));
 
   const refresh = () => listEntries().then(setEntries);
   useEffect(() => { refresh(); }, []);
@@ -40,10 +68,45 @@ export default function PracticePage() {
   };
 
   const startSession = () => {
-    setSession({ queue: shuffleGrouped(pool), index: 0, correct: 0, total: 0, streak: 0, bestStreak: 0 });
+    setSession({ section, queue: shuffleGrouped(pool), index: 0, correct: 0, total: 0, streak: 0, bestStreak: 0 });
   };
 
-  const endSession = () => setSession(null);
+  const continueSession = (s) => {
+    const saved = loadProgress(s);
+    if (!saved) return;
+    const byId = new Map(entries.map((e) => [e.id, e]));
+    const queue = saved.queueIds.map((id) => byId.get(id)).filter(Boolean);
+    setSection(s);
+    setSession({ section: s, queue, index: Math.min(saved.index, queue.length), correct: saved.correct, total: saved.total, streak: saved.streak, bestStreak: saved.bestStreak });
+  };
+
+  // Persist progress every time it changes, so leaving mid-session (or just
+  // closing the tab) doesn't lose your place. Cleared once the queue is
+  // actually finished — nothing left to continue at that point. Pure
+  // localStorage side effects only; savedProgress (React state, used to
+  // show the "Continue" buttons) is refreshed from handlers, not here.
+  useEffect(() => {
+    if (!session || session.section === "All") return;
+    if (session.index >= session.queue.length) {
+      clearProgress(session.section);
+      return;
+    }
+    saveProgress(session.section, {
+      queueIds: session.queue.map((e) => e.id),
+      index: session.index,
+      correct: session.correct,
+      total: session.total,
+      streak: session.streak,
+      bestStreak: session.bestStreak,
+    });
+  }, [session]);
+
+  const endSession = () => {
+    if (session && session.section !== "All") {
+      setSavedProgress((prev) => ({ ...prev, [session.section]: loadProgress(session.section) }));
+    }
+    setSession(null);
+  };
 
   const handleSkip = () => setSession((s) => ({ ...s, index: s.index + 1 }));
 
@@ -76,6 +139,18 @@ export default function PracticePage() {
           <div className="serif" style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>Practice Arena</div>
           <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>Pull from your whole question bank, not just what&apos;s due for review.</div>
 
+          {(savedProgress.Quant || savedProgress.Verbal) && (
+            <div style={{ marginBottom: 20, display: "flex", flexDirection: "column", gap: 8 }}>
+              {["Quant", "Verbal"].map((s) => savedProgress[s] && (
+                <button key={s} className="btn btn-primary" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                  onClick={() => continueSession(s)}>
+                  <span>Continue {s} practice</span>
+                  <span style={{ fontSize: 12, opacity: 0.85 }}>{savedProgress[s].index}/{savedProgress[s].queueIds.length}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div style={{ marginBottom: 16 }}>
             <label>Section</label>
             <div style={{ display: "flex", gap: 10 }}>
@@ -88,7 +163,9 @@ export default function PracticePage() {
 
           <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 16 }}>{pool.length} question{pool.length === 1 ? "" : "s"} in this pool.</div>
 
-          <button className="btn btn-primary" onClick={startSession} disabled={pool.length === 0}>Start session</button>
+          <button className="btn btn-primary" onClick={startSession} disabled={pool.length === 0}>
+            {savedProgress[section] ? "Start new session (discards saved progress)" : "Start session"}
+          </button>
         </div>
       </AppShell>
     );
