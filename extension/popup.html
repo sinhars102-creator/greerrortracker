@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>GRE Capture</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="status" id="status">Checking connection…</div>
+
+  <div id="controls" class="hidden">
+    <div class="group-label">Section</div>
+    <div class="pills" id="section-pills"></div>
+
+    <div class="group-label">Subtype</div>
+    <div class="pills" id="subtype-pills"></div>
+
+    <button id="capture-now" class="capture-btn">Capture now</button>
+
+    <button id="disconnect" class="link">Disconnect</button>
+  </div>
+
+  <div id="answer-view" class="hidden">
+    <label for="answer">Correct answer</label>
+    <input id="answer" type="text" autocomplete="off" placeholder="e.g. C, or B and D" />
+    <div class="row">
+      <button id="skip" class="secondary">Skip</button>
+      <button id="submit-answer" class="capture-btn">Save</button>
+    </div>
+    <div class="hint" id="answer-status"></div>
+  </div>
+
+  <div id="connect-hint" class="hidden hint">
+    Open the GRE Error Ledger and click <strong>Start Logging</strong> to connect.
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

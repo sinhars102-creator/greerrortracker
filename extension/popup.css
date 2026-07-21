@@ -1,0 +1,119 @@
+body {
+  margin: 0;
+  padding: 14px;
+  width: 260px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #14161a;
+  color: #e8e6e1;
+}
+.status {
+  font-size: 12.5px;
+  color: #9a9791;
+  margin-bottom: 10px;
+}
+.status.connected { color: #7fae7f; }
+.hidden { display: none; }
+.group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9a9791;
+  margin: 10px 0 6px;
+}
+.pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pill {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  border: 1px solid #33363d;
+  background: #1e2126;
+  color: #e8e6e1;
+  cursor: pointer;
+}
+.pill.active {
+  background: #d9a441;
+  color: #14161a;
+  border-color: #d9a441;
+  font-weight: 600;
+}
+.capture-btn {
+  width: 100%;
+  margin-top: 14px;
+  padding: 9px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: none;
+  background: #d9a441;
+  color: #14161a;
+  cursor: pointer;
+}
+.capture-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.link {
+  margin-top: 14px;
+  background: none;
+  border: none;
+  color: #9a9791;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+.hint {
+  font-size: 12.5px;
+  color: #9a9791;
+  line-height: 1.5;
+}
+#capture-status {
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+label {
+  display: block;
+  font-size: 12px;
+  color: #9a9791;
+  margin-bottom: 4px;
+}
+input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 14px;
+  background: #1e2126;
+  border: 1px solid #33363d;
+  border-radius: 6px;
+  color: #e8e6e1;
+}
+input:focus {
+  outline: none;
+  border-color: #d9a441;
+}
+.row {
+  display: flex;
+  gap: 8px;
+}
+.row .capture-btn, .row .secondary {
+  margin-top: 10px;
+  flex: 1;
+}
+button.secondary {
+  padding: 9px 10px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid #33363d;
+  background: #1e2126;
+  color: #e8e6e1;
+  cursor: pointer;
+}
+#answer-status {
+  margin-top: 8px;
+  margin-bottom: 0;
+  min-height: 14px;
+}

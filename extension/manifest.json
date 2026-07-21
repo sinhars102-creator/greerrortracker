@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "GRE Mistake Capture",
+  "version": "1.0.0",
+  "description": "Screenshot a hard GRE question and auto-log it to the GRE Error Ledger.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArlxtt0aSW4ld2Nr9a5m+aQtzwpMsXxxKb/P3+zPIqrr34m+LfRsV9Qwc1j76U+D5yhcKIFmx3o0peEXR9cRMDy3aJfJhuWxvFGhHO6zcY8wbqmxv2vRDhc0VqO/ZNhb0clAJKpbZ1rsx0v2vnEwtuqkMkBBqHLkpzf064TtePbzK07E4RuTttjmETNUQslfkSWm9KbHQX7r4EoGgsKmeagky/G3Z/8M4FUb/AdWzdp06ulcmLzLVnVraMXv3uhHho3NeHXLQezQPfwueIwdYqYJ2rx4J0OJzz8je1EzxVPc+dB3RjqJxvoqqF27QJDIeQajez0f8i0cPgxo7puqlXwIDAQAB",
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "GRE Capture" },
+  "permissions": ["activeTab", "storage", "notifications"],
+  "host_permissions": [
+    "https://gre-tracker-web.vercel.app/*",
+    "http://localhost:3000/*",
+    "https://vflxwdetwxzxsybsganv.supabase.co/*"
+  ],
+  "externally_connectable": {
+    "matches": ["https://gre-tracker-web.vercel.app/*", "http://localhost:3000/*"]
+  },
+  "commands": {
+    "capture-question": {
+      "suggested_key": { "default": "Ctrl+Shift+G", "mac": "Command+Shift+G" },
+      "description": "Capture the current tab as a new GRE mistake"
+    }
+  },
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}
