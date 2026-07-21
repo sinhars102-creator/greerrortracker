@@ -5,23 +5,24 @@ A real, deployed version of the GRE mistake tracker: Next.js + Supabase (databas
 ## What's already working
 
 - **Auth** — email magic-link sign-in via Supabase Auth. Every user's data is isolated by Row Level Security.
-- **Log Mistake** — paste/upload/drag-drop a screenshot, auto-compressed client-side, uploaded to Supabase Storage. Classification runs server-side via `/api/classify` using **your own** Anthropic API key — no shared throttle. Word traps and quant traps are auto-detected and logged in the background when the classifier finds one, deduped by word/trap name.
+- **Log Mistake** — paste/upload/drag-drop a screenshot, auto-compressed client-side, uploaded to Supabase Storage. Logging itself never calls AI unless there's a screenshot to read: if you typed the question by hand, the entry saves with zero API calls. If there's a screenshot, `/api/extract-question` transcribes the question (and passage, for Reading Comprehension) in the background — extraction only, no mistake-type analysis. Reading Comprehension supports batch logging: one shared passage, multiple question screenshots, each becoming its own entry.
+- **Classify (on-demand)** — a "Classify" button per entry on the All Entries page calls `/api/classify` to assign mistake-type tags, write a diagnostic insight sentence, find related prior mistakes, and auto-detect word/quant traps (deduped by word/trap name). Not automatic — you decide which entries are worth the AI call.
 - **Dashboard** — stats and charts (by error type, by topic).
-- **All Entries** — list, search, filter by section, expand, edit, delete. Supports `?entry=<id>` for deep-linking a specific card open, used by Focus List, Error Buckets, and Repeated Errors.
-- **Review** — spaced repetition (1/3/7/14/30 day intervals), with a pre-session **Quick Check / Deep Practice** mode toggle.
-- **Practice Arena** — Quant/Verbal test mode pulling from the whole question bank (not just what's due), with live score and streak tracking. Same mode toggle as Review.
-- **Deep Practice mode** (Review + Practice Arena) — write your reasoning per blank, and on Verbal questions tag why each unselected option is wrong (star up to 2 as the "closest trap" for an elaboration note). Graded by `/api/grade`; the graded result — including per-option tag verdicts — is persisted to the entry's `last_attempt` column.
-- **Word Traps** & **Quant Traps** pages — list, manually add, and delete. Auto-detected entries are tagged distinctly from user-added ones.
+- **All Entries** — list, search, filter by section, expand, edit, classify, delete. Supports `?entry=<id>` for deep-linking a specific card open, used by Focus List, Error Buckets, and Repeated Errors.
+- **Review** — spaced repetition (1/3/7/14/30 day intervals): pick an answer, get graded instantly against the cached correct answer.
+- **Practice Arena** — Quant/Verbal test mode pulling from the whole question bank (not just what's due), with live score and streak tracking.
+- **Vocab Review** — separate spaced-repetition word quiz (72 built-in words + your own), graded via `/api/grade-vocab`. Add words with just a name and `/api/define-words` looks up the meaning; `/api/group-vocab` clusters your list into synonym groups you can review together.
+- **Word Traps** & **Quant Traps** pages — list, manually add, and delete. Auto-detected entries (from Classify) are tagged distinctly from user-added ones.
 - **Focus List** — builds a prioritized pre-test checklist via `/api/focus-list` from your mistakes and word traps, cached in `focus_lists`. Filterable by All/Quant/Verbal, checkbox state persists, flags itself stale when your entry count has changed since it was built.
 - **Work On This** — blunt per-subtype diagnosis via `/api/insight`, cached in `insights`. Quant subtypes get a flat list of key facts missed; Verbal subtypes get an ordered framework to run every time.
 - **Error Buckets** — client-side aggregation of every (section, subtype, mistake type) combination, color-coded by frequency (Critical/Recurring/Isolated), collapsible to the underlying questions.
 - **Repeated Errors** — Verbal questions missed 2+ times, grouped by subtype, worst-first.
-- **API routes** — `/api/classify`, `/api/extract-options`, `/api/grade`, `/api/insight`, `/api/focus-list` — all prompts ported directly from the version we refined all day in the artifact.
+- **API routes** — `/api/extract-question`, `/api/classify`, `/api/extract-options`, `/api/insight`, `/api/focus-list`, `/api/grade-vocab`, `/api/define-words`, `/api/group-vocab`.
 
 ## What's left
 
 - **Backup/export** — less critical now since data lives in a real database, but a JSON export button is a quick add if you want it.
-- **Related-entry backrefs** — when `/api/classify` flags a new mistake as related to prior ones, the new entry's `relatedEntryIds` gets set, but the prior entries' `repeatedByIds` don't currently get updated to point back. Straightforward to add in `app/log/page.js`'s classification block.
+- **Related-entry backrefs** — when `/api/classify` flags a mistake as related to prior ones, the entry's `relatedEntryIds` gets set, but the prior entries' `repeatedByIds` don't currently get updated to point back. Straightforward to add in `app/entries/page.js`'s classify handler.
 
 ## Setup
 

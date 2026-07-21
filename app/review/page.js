@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import QuestionCard from "@/components/QuestionCard";
-import { listEntries, updateEntry } from "@/lib/entries";
+import { listEntries, updateEntry, groupForSequentialPractice } from "@/lib/entries";
 
 const INTERVALS = [1, 3, 7, 14, 30];
 
@@ -17,7 +17,6 @@ function addDays(iso, days) {
 export default function ReviewPage() {
   const [entries, setEntries] = useState(null);
   const [started, setStarted] = useState(false);
-  const [mode, setMode] = useState("quick");
   const [skippedIds, setSkippedIds] = useState(() => new Set());
 
   const refresh = () => listEntries().then(setEntries);
@@ -26,7 +25,10 @@ export default function ReviewPage() {
   const due = useMemo(() => {
     if (!entries) return [];
     const today = todayISO();
-    return entries.filter((e) => !e.mastered && e.nextReview <= today);
+    const dueEntries = entries.filter((e) => !e.mastered && e.nextReview <= today);
+    // Keep Reading Comprehension batches adjacent and in sequence, rather
+    // than scattered wherever they land in the due list.
+    return groupForSequentialPractice(dueEntries).flat();
   }, [entries]);
 
   // A wrong or right answer always moves nextReview off "today", so the
@@ -43,7 +45,7 @@ export default function ReviewPage() {
     setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
   };
 
-  const handleFinish = async ({ correct, deepAttempt, gradeResult }) => {
+  const handleFinish = async ({ correct }) => {
     const totalAttempts = (current.totalAttempts || 0) + 1;
     const wrongAttempts = (current.wrongAttempts || 0) + (correct ? 0 : 1);
     const patch = { totalAttempts, wrongAttempts };
@@ -54,9 +56,6 @@ export default function ReviewPage() {
       Object.assign(patch, { reviewCount: nextCount, lastReviewed: todayISO(), nextReview: addDays(todayISO(), interval), mastered: nextCount >= INTERVALS.length });
     } else {
       Object.assign(patch, { reviewCount: 0, lastReviewed: todayISO(), nextReview: addDays(todayISO(), 1), mastered: false });
-    }
-    if (deepAttempt) {
-      patch.lastAttempt = { mode: "deep", ...deepAttempt, feedback: gradeResult, attemptedAt: todayISO() };
     }
 
     await updateEntry(current.id, patch);
@@ -82,18 +81,6 @@ export default function ReviewPage() {
         <div className="card" style={{ padding: 22 }}>
           <div className="serif" style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>{due.length} due for review</div>
           <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>Spaced-repetition queue — items you&apos;ve missed or haven&apos;t reviewed recently.</div>
-
-          <div style={{ marginBottom: 20 }}>
-            <label>Mode</label>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn" style={{ flex: 1, background: mode === "quick" ? "var(--amber)" : "var(--panel2)", color: mode === "quick" ? "#0F1115" : "var(--text)", fontWeight: mode === "quick" ? 700 : 400 }} onClick={() => setMode("quick")}>Quick Check</button>
-              <button className="btn" style={{ flex: 1, background: mode === "deep" ? "var(--amber)" : "var(--panel2)", color: mode === "deep" ? "#0F1115" : "var(--text)", fontWeight: mode === "deep" ? 700 : 400 }} onClick={() => setMode("deep")}>Deep Practice</button>
-            </div>
-            <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 6 }}>
-              {mode === "quick" ? "Pick an answer, get graded instantly." : "Write your reasoning and tag traps — graded by AI."}
-            </div>
-          </div>
-
           <button className="btn btn-primary" onClick={() => { setSkippedIds(new Set()); setStarted(true); }}>Start review</button>
         </div>
       </AppShell>
@@ -118,8 +105,9 @@ export default function ReviewPage() {
       <QuestionCard
         key={current.id}
         entry={current}
-        mode={mode}
         onBlanksExtracted={(blanks) => patchEntry(current.id, { blanks })}
+        onSolutionExtracted={(solution) => patchEntry(current.id, { solution })}
+        onEdited={(patch) => patchEntry(current.id, patch)}
         onFinish={handleFinish}
         onSkip={handleSkip}
       />

@@ -23,6 +23,7 @@ create table if not exists entries (
   image_path text, -- path within the 'screenshots' storage bucket, if any
   blanks jsonb, -- cached extracted answer-choice structure, see README for shape
   last_attempt jsonb, -- cached last graded practice attempt
+  solution jsonb, -- cached per-blank solution explanations (array of strings, parallel to blanks), fetched on-demand via "Show solution"
   review_count int not null default 0,
   last_reviewed date,
   next_review date not null default current_date,
@@ -30,9 +31,17 @@ create table if not exists entries (
   total_attempts int not null default 0,
   wrong_attempts int not null default 0,
   pending boolean not null default false,
+  rc_group_id uuid, -- shared across entries logged together as one Reading Comprehension batch (same passage), so they can be practiced in sequence
+  rc_group_order int, -- position of this question within its rc_group_id batch
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- for installs that already ran the create table above before `solution` existed
+alter table entries add column if not exists solution jsonb;
+-- for installs that already ran the create table above before RC batch grouping existed
+alter table entries add column if not exists rc_group_id uuid;
+alter table entries add column if not exists rc_group_order int;
 
 create index if not exists entries_user_id_idx on entries(user_id);
 create index if not exists entries_next_review_idx on entries(user_id, next_review) where not mastered;

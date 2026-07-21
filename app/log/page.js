@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import AppShell from "@/components/AppShell";
 import ImageLightbox from "@/components/ImageLightbox";
 import { createClient } from "@/lib/supabase/client";
-import { createEntry, updateEntry, uploadScreenshot, compressImageDataUrl, dataUrlToBlobAndParts, listEntries, findWordTrapByWord, createWordTrap, findQuantTrapByName, createQuantTrap } from "@/lib/entries";
+import { createEntry, updateEntry, uploadScreenshot, compressImageDataUrl, dataUrlToBlobAndParts } from "@/lib/entries";
 
 const QUANT_SUBTYPES = ["Arithmetic", "Algebra", "Geometry", "Number Properties", "Word Problems", "Data Interpretation", "Probability & Combinatorics", "Quantitative Comparison"];
 const VERBAL_SUBTYPES = ["Sentence Equivalence", "Text Completion", "Reading Comprehension", "Vocabulary"];
@@ -100,20 +100,23 @@ export default function LogPage() {
 
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
+    const needsExtraction = !!imageDataUrl && !form.questionText.trim();
 
-    // 1. Create the entry immediately with whatever we have — never block on classification.
+    // 1. Create the entry immediately with whatever we have. Mistake types
+    // stay empty until you classify it (on-demand, from All Entries) —
+    // logging itself never needs AI unless there's a screenshot to read.
     const entry = await createEntry({
       section: form.section,
       subtype: form.subtype,
-      questionText: form.questionText.trim() || (imageDataUrl ? "(analyzing…)" : ""),
+      questionText: form.questionText.trim() || (imageDataUrl ? "(transcribing…)" : ""),
       passage: form.passage.trim(),
       yourAnswer: form.yourAnswer,
       correctAnswer: form.correctAnswer,
       notes: form.notes,
       tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
-      mistakeTypes: ["Analyzing"],
+      mistakeTypes: [],
       hasImage: false, // set true once/if the upload succeeds
-      pending: true,
+      pending: needsExtraction,
     }, user.id);
 
     const formSnapshot = { ...form };
@@ -121,76 +124,41 @@ export default function LogPage() {
     setForm({ ...emptyForm, section: form.section, subtype: form.section === "Quant" ? QUANT_SUBTYPES[0] : VERBAL_SUBTYPES[0] });
     setImageDataUrl(null);
     setSubmitting(false);
-    setSavedMsg("Logged — classifying in the background.");
+    setSavedMsg(needsExtraction ? "Logged — reading the screenshot in the background." : "Logged.");
     setTimeout(() => setSavedMsg(""), 4000);
 
-    // 2. Upload the screenshot in the background (independent of classification succeeding).
-    if (imageSnapshot) {
-      const parts = dataUrlToBlobAndParts(imageSnapshot);
-      uploadScreenshot(user.id, entry.id, parts.blob)
-        .then((path) => updateEntry(entry.id, { hasImage: true, imagePath: path }))
-        .catch(() => {}); // classification below doesn't depend on this succeeding
-    }
+    if (!imageSnapshot) return; // typed by hand — nothing else to do, no AI call at all
 
-    // 3. Classify in the background using the in-memory image regardless of upload success.
+    // 2. Upload the screenshot in the background.
+    const parts = dataUrlToBlobAndParts(imageSnapshot);
+    uploadScreenshot(user.id, entry.id, parts.blob)
+      .then((path) => updateEntry(entry.id, { hasImage: true, imagePath: path }))
+      .catch(() => {});
+
+    // 3. Only extract question/passage text if you didn't already type it.
+    if (!needsExtraction) return;
     (async () => {
       try {
-        const priorEntries = (await listEntries())
-          .filter((e) => e.id !== entry.id)
-          .slice(0, 60)
-          .map((e) => ({ id: e.id, section: e.section, subtype: e.subtype, mistakeTypes: e.mistakeTypes, notes: (e.notes || "").slice(0, 220) }));
-
-        const image = imageSnapshot ? dataUrlToBlobAndParts(imageSnapshot) : null;
-        const res = await fetch("/api/classify", {
+        const isRC = formSnapshot.subtype === "Reading Comprehension";
+        const needsPassage = isRC && !formSnapshot.passage.trim();
+        const res = await fetch("/api/extract-question", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            form: formSnapshot,
-            priorEntries,
-            image: image ? { mediaType: image.mediaType, base64: image.base64 } : null,
+            image: { mediaType: parts.mediaType, base64: parts.base64 },
+            subtype: formSnapshot.subtype,
+            needsPassage,
           }),
         });
         const result = await res.json();
-        if (!res.ok) throw new Error(result.error || "classification failed");
-
+        if (!res.ok) throw new Error(result.error || "extraction failed");
         await updateEntry(entry.id, {
-          questionText: formSnapshot.questionText.trim() || result.questionText || "(see screenshot)",
+          questionText: result.questionText || "(see screenshot)",
           passage: formSnapshot.passage.trim() || result.passage || "",
-          mistakeTypes: result.mistakeTypes.length ? result.mistakeTypes : ["Concept Gap"],
-          insight: result.insight,
-          relatedEntryIds: result.relatedEntryIds,
           pending: false,
         });
-
-        if (result.wordTrap?.word) {
-          const existing = await findWordTrapByWord(result.wordTrap.word).catch(() => null);
-          if (!existing) {
-            await createWordTrap({
-              word: result.wordTrap.word,
-              literalMeaning: result.wordTrap.literalMeaning,
-              actualMeaning: result.wordTrap.actualMeaning,
-              source: "auto",
-              linkedEntryId: entry.id,
-            }, user.id).catch(() => {});
-          }
-        }
-        if (result.quantTrap?.trapName) {
-          const existing = await findQuantTrapByName(result.quantTrap.trapName).catch(() => null);
-          if (!existing) {
-            await createQuantTrap({
-              trapName: result.quantTrap.trapName,
-              whatHappened: result.quantTrap.whatHappened,
-              correctRule: result.quantTrap.correctRule,
-              checkpoint: result.quantTrap.checkpoint,
-              source: "auto",
-              linkedEntryId: entry.id,
-            }, user.id).catch(() => {});
-          }
-        }
-        // NOTE: backref updates on related entries (repeatedByIds) are
-        // straightforward to add here following the same pattern — see README roadmap.
       } catch (e) {
-        await updateEntry(entry.id, { mistakeTypes: ["Uncategorized"], pending: false }).catch(() => {});
+        await updateEntry(entry.id, { questionText: "(see screenshot)", pending: false }).catch(() => {});
       }
     })();
   };
@@ -204,23 +172,29 @@ export default function LogPage() {
     const { data: { user } } = await supabase.auth.getUser();
     const sharedPassage = form.passage.trim();
     const questionsSnapshot = rcQuestions;
+    // Shared across every entry in this batch so Practice/Review can keep
+    // them together and in sequence, instead of scattering them.
+    const rcGroupId = crypto.randomUUID();
 
     // 1. Create every entry immediately, marked pending — same "save first,
     // enrich later" pattern as the single-screenshot flow, just per question.
     const created = [];
-    for (const q of questionsSnapshot) {
+    for (let i = 0; i < questionsSnapshot.length; i++) {
+      const q = questionsSnapshot[i];
       const entry = await createEntry({
         section: "Verbal",
         subtype: "Reading Comprehension",
-        questionText: "(analyzing…)",
+        questionText: "(transcribing…)",
         passage: sharedPassage,
         yourAnswer: q.yourAnswer,
         correctAnswer: q.correctAnswer,
         notes: q.notes,
         tags: [],
-        mistakeTypes: ["Analyzing"],
+        mistakeTypes: [],
         hasImage: false,
         pending: true,
+        rcGroupId,
+        rcGroupOrder: i,
       }, user.id);
       created.push({ entry, q });
     }
@@ -228,10 +202,10 @@ export default function LogPage() {
     setRcQuestions([]);
     setForm((f) => ({ ...f, passage: "" }));
     setSubmitting(false);
-    setSavedMsg(`Logged ${created.length} mistake${created.length > 1 ? "s" : ""} — classifying in the background.`);
+    setSavedMsg(`Logged ${created.length} mistake${created.length > 1 ? "s" : ""} — reading screenshots in the background.`);
     setTimeout(() => setSavedMsg(""), 4000);
 
-    // 2 & 3. Upload + classify each question independently and concurrently.
+    // 2 & 3. Upload + extract each question's text independently and concurrently.
     created.forEach(({ entry, q }) => {
       const parts = dataUrlToBlobAndParts(q.imageDataUrl);
       uploadScreenshot(user.id, entry.id, parts.blob)
@@ -240,47 +214,24 @@ export default function LogPage() {
 
       (async () => {
         try {
-          const priorEntries = (await listEntries())
-            .filter((e) => e.id !== entry.id)
-            .slice(0, 60)
-            .map((e) => ({ id: e.id, section: e.section, subtype: e.subtype, mistakeTypes: e.mistakeTypes, notes: (e.notes || "").slice(0, 220) }));
-
-          const image = dataUrlToBlobAndParts(q.imageDataUrl);
-          const res = await fetch("/api/classify", {
+          const res = await fetch("/api/extract-question", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              form: { section: "Verbal", subtype: "Reading Comprehension", questionText: "", passage: sharedPassage, yourAnswer: q.yourAnswer, correctAnswer: q.correctAnswer, notes: q.notes },
-              priorEntries,
-              image: { mediaType: image.mediaType, base64: image.base64 },
+              image: { mediaType: parts.mediaType, base64: parts.base64 },
+              subtype: "Reading Comprehension",
+              needsPassage: !sharedPassage,
             }),
           });
           const result = await res.json();
-          if (!res.ok) throw new Error(result.error || "classification failed");
-
+          if (!res.ok) throw new Error(result.error || "extraction failed");
           await updateEntry(entry.id, {
             questionText: result.questionText || "(see screenshot)",
             passage: sharedPassage || result.passage || "",
-            mistakeTypes: result.mistakeTypes.length ? result.mistakeTypes : ["Concept Gap"],
-            insight: result.insight,
-            relatedEntryIds: result.relatedEntryIds,
             pending: false,
           });
-
-          if (result.wordTrap?.word) {
-            const existing = await findWordTrapByWord(result.wordTrap.word).catch(() => null);
-            if (!existing) {
-              await createWordTrap({
-                word: result.wordTrap.word,
-                literalMeaning: result.wordTrap.literalMeaning,
-                actualMeaning: result.wordTrap.actualMeaning,
-                source: "auto",
-                linkedEntryId: entry.id,
-              }, user.id).catch(() => {});
-            }
-          }
         } catch (e) {
-          await updateEntry(entry.id, { mistakeTypes: ["Uncategorized"], pending: false }).catch(() => {});
+          await updateEntry(entry.id, { questionText: "(see screenshot)", pending: false }).catch(() => {});
         }
       })();
     });
@@ -318,7 +269,7 @@ export default function LogPage() {
             <div style={{ marginBottom: 14 }}>
               <label>Passage — shared across every question below</label>
               <textarea rows={6} value={form.passage} onChange={(e) => set("passage", e.target.value)} disabled={submitting}
-                placeholder="Leave blank to have it transcribed automatically from the first screenshot's classification." />
+                placeholder="Leave blank to have it transcribed automatically from each screenshot." />
             </div>
 
             <div style={{ marginBottom: 14 }}>

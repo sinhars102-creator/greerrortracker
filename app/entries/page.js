@@ -3,7 +3,11 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
-import { listEntries, updateEntry, deleteEntry as deleteEntryApi, getScreenshotUrl } from "@/lib/entries";
+import { createClient } from "@/lib/supabase/client";
+import {
+  listEntries, updateEntry, deleteEntry as deleteEntryApi, getScreenshotUrl,
+  findWordTrapByWord, createWordTrap, findQuantTrapByName, createQuantTrap,
+} from "@/lib/entries";
 
 function EntryImage({ path }) {
   const [url, setUrl] = useState(null);
@@ -34,9 +38,72 @@ function EntriesPageInner() {
   const [search, setSearch] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState(null);
+  const [classifyingId, setClassifyingId] = useState(null);
+  const [classifyError, setClassifyError] = useState("");
 
   const refresh = () => listEntries().then(setEntries);
   useEffect(() => { refresh(); }, []);
+
+  const classifyEntry = async (entry) => {
+    setClassifyingId(entry.id);
+    setClassifyError("");
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      const priorEntries = (entries || [])
+        .filter((e) => e.id !== entry.id)
+        .slice(0, 60)
+        .map((e) => ({ id: e.id, section: e.section, subtype: e.subtype, mistakeTypes: e.mistakeTypes, notes: (e.notes || "").slice(0, 220) }));
+
+      const res = await fetch("/api/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          form: { section: entry.section, subtype: entry.subtype, questionText: entry.questionText, passage: entry.passage, yourAnswer: entry.yourAnswer, correctAnswer: entry.correctAnswer, notes: entry.notes },
+          priorEntries,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Classification failed");
+
+      await updateEntry(entry.id, {
+        mistakeTypes: result.mistakeTypes.length ? result.mistakeTypes : ["Concept Gap"],
+        insight: result.insight,
+        relatedEntryIds: result.relatedEntryIds,
+      });
+
+      if (result.wordTrap?.word) {
+        const existing = await findWordTrapByWord(result.wordTrap.word).catch(() => null);
+        if (!existing) {
+          await createWordTrap({
+            word: result.wordTrap.word,
+            literalMeaning: result.wordTrap.literalMeaning,
+            actualMeaning: result.wordTrap.actualMeaning,
+            source: "auto",
+            linkedEntryId: entry.id,
+          }, user.id).catch(() => {});
+        }
+      }
+      if (result.quantTrap?.trapName) {
+        const existing = await findQuantTrapByName(result.quantTrap.trapName).catch(() => null);
+        if (!existing) {
+          await createQuantTrap({
+            trapName: result.quantTrap.trapName,
+            whatHappened: result.quantTrap.whatHappened,
+            correctRule: result.quantTrap.correctRule,
+            checkpoint: result.quantTrap.checkpoint,
+            source: "auto",
+            linkedEntryId: entry.id,
+          }, user.id).catch(() => {});
+        }
+      }
+      await refresh();
+    } catch (e) {
+      setClassifyError(e.message || "Classification failed");
+    } finally {
+      setClassifyingId(null);
+    }
+  };
 
   const filtered = useMemo(() => {
     if (!entries) return [];
@@ -117,13 +184,21 @@ function EntriesPageInner() {
                       <div style={{ whiteSpace: "pre-wrap", marginBottom: 8 }}>{e.questionText}</div>
                       <div><span style={{ color: "var(--red)" }}>You picked:</span> {e.yourAnswer || "—"} &nbsp;|&nbsp; <span style={{ color: "var(--sage)" }}>Correct:</span> {e.correctAnswer || "—"}</div>
                       <div style={{ marginTop: 6 }}>
-                        {(e.mistakeTypes || []).map((m, i) => <span key={i} className="pill" style={{ background: "var(--border)", color: "var(--text)", marginRight: 5 }}>{m}</span>)}
-                        {e.notes}
+                        {(e.mistakeTypes || []).length > 0
+                          ? e.mistakeTypes.map((m, i) => <span key={i} className="pill" style={{ background: "var(--border)", color: "var(--text)", marginRight: 5 }}>{m}</span>)
+                          : <span style={{ fontSize: 11.5, color: "var(--faint)", fontStyle: "italic" }}>Not classified yet</span>}
+                        {" "}{e.notes}
                       </div>
                       {e.insight && <div style={{ marginTop: 6, color: "var(--amber)" }}>{e.insight}</div>}
-                      <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between" }}>
+                      {classifyError && classifyingId === null && (
+                        <div style={{ marginTop: 6, color: "var(--red)", fontSize: 12 }}>{classifyError}</div>
+                      )}
+                      <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <span style={{ color: "var(--faint)", fontSize: 11 }}>next review: {e.nextReview} · reviewed {e.reviewCount}×</span>
                         <div style={{ display: "flex", gap: 8 }}>
+                          <button className="btn" style={{ padding: "5px 10px", fontSize: 12 }} onClick={() => classifyEntry(e)} disabled={classifyingId === e.id}>
+                            {classifyingId === e.id ? "Classifying…" : (e.mistakeTypes || []).length > 0 ? "Re-classify" : "Classify"}
+                          </button>
                           <button className="btn" style={{ padding: "5px 10px", fontSize: 12 }} onClick={() => startEdit(e)}>Edit</button>
                           <button className="btn btn-red" style={{ padding: "5px 10px", fontSize: 12 }} onClick={() => del(e.id)}>Delete</button>
                         </div>
