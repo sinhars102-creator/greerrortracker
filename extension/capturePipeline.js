@@ -38,6 +38,10 @@ export async function beginCapture() {
     notify("GRE Capture", "Set a section/subtype in the extension popup first.");
     return;
   }
+  if (subtype === "Vocabulary") {
+    notify("GRE Capture", "Vocabulary logs words, not screenshots — use the word field in the popup.");
+    return;
+  }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   await chrome.storage.local.set({
     pendingCapture: { status: "awaiting-answer", windowId: tab.windowId, section, subtype },
@@ -95,4 +99,40 @@ export async function finishCapture(correctAnswer) {
 
 export async function cancelCapture() {
   await chrome.storage.local.remove("pendingCapture");
+}
+
+// Vocabulary flow: no screenshot, just word(s) -> looked up and logged
+// straight to Vocab Review via /api/extension/vocab.
+export async function submitVocabWords(rawText) {
+  const words = (rawText || "").split(",").map((w) => w.trim()).filter(Boolean);
+  if (words.length === 0) return { error: "Type at least one word." };
+
+  let token;
+  try {
+    token = await getValidAccessToken();
+  } catch {
+    return { error: "Sign-in expired — open the app and click Start Logging again." };
+  }
+  if (!token) return { error: "Not connected — open the app and click Start Logging." };
+
+  let result;
+  try {
+    const res = await fetch(`${APP_API_BASE}/api/extension/vocab`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ words }),
+    });
+    result = await res.json();
+    if (!res.ok) throw new Error(result.error || `Request failed (${res.status})`);
+  } catch (e) {
+    return { error: `Couldn't log the words: ${e.message}` };
+  }
+
+  const parts = [];
+  if (result.added.length) parts.push(`Added: ${result.added.join(", ")}`);
+  if (result.skipped.length) parts.push(`Already logged: ${result.skipped.join(", ")}`);
+  if (result.failed.length) parts.push(`Couldn't define: ${result.failed.join(", ")}`);
+  const summary = parts.join(" · ") || "Nothing to add.";
+  notify("Vocab logged", summary);
+  return { ok: true, summary };
 }

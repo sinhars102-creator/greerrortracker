@@ -1,5 +1,5 @@
 import { QUANT_SUBTYPES, VERBAL_SUBTYPES } from "./config.js";
-import { beginCapture, finishCapture, cancelCapture } from "./capturePipeline.js";
+import { beginCapture, finishCapture, cancelCapture, submitVocabWords } from "./capturePipeline.js";
 
 const statusEl = document.getElementById("status");
 const controlsEl = document.getElementById("controls");
@@ -9,6 +9,10 @@ const sectionPillsEl = document.getElementById("section-pills");
 const subtypePillsEl = document.getElementById("subtype-pills");
 const answerInput = document.getElementById("answer");
 const answerStatusEl = document.getElementById("answer-status");
+const captureControlsEl = document.getElementById("capture-controls");
+const vocabControlsEl = document.getElementById("vocab-controls");
+const vocabWordsInput = document.getElementById("vocab-words");
+const vocabStatusEl = document.getElementById("vocab-status");
 
 function renderPills(container, options, current, onPick) {
   container.innerHTML = "";
@@ -70,6 +74,14 @@ async function render() {
     await chrome.storage.local.set({ subtype: picked });
     render();
   });
+
+  const isVocab = section === "Verbal" && subtype === "Vocabulary";
+  captureControlsEl.classList.toggle("hidden", isVocab);
+  vocabControlsEl.classList.toggle("hidden", !isVocab);
+  if (isVocab) {
+    vocabStatusEl.textContent = "";
+    vocabWordsInput.focus();
+  }
 }
 
 // Live-update if storage changes while the popup is open (e.g. capture
@@ -86,6 +98,19 @@ document.getElementById("disconnect").addEventListener("click", async () => {
 document.getElementById("capture-now").addEventListener("click", async () => {
   await beginCapture();
   render();
+});
+
+async function submitVocab() {
+  if (!vocabWordsInput.value.trim()) return;
+  vocabStatusEl.textContent = "Logging…";
+  const result = await submitVocabWords(vocabWordsInput.value);
+  vocabStatusEl.textContent = result.error || result.summary || "";
+  if (result.ok) vocabWordsInput.value = "";
+}
+
+document.getElementById("log-words").addEventListener("click", submitVocab);
+vocabWordsInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") submitVocab();
 });
 
 async function submit() {

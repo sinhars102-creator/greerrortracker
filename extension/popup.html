@@ -15,7 +15,16 @@
     <div class="group-label">Subtype</div>
     <div class="pills" id="subtype-pills"></div>
 
-    <button id="capture-now" class="capture-btn">Capture now</button>
+    <div id="capture-controls">
+      <button id="capture-now" class="capture-btn">Capture now</button>
+    </div>
+
+    <div id="vocab-controls" class="hidden">
+      <label for="vocab-words">Word(s) — comma separated</label>
+      <input id="vocab-words" type="text" autocomplete="off" placeholder="e.g. Sanguine, Obsequious" />
+      <button id="log-words" class="capture-btn">Log words</button>
+      <div class="hint" id="vocab-status"></div>
+    </div>
 
     <button id="disconnect" class="link">Disconnect</button>
   </div>
