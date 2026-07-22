@@ -10,6 +10,7 @@ import { getAiProvider, setAiProvider } from "@/lib/settings";
 const PROVIDERS = [
   { value: "anthropic", label: "Claude" },
   { value: "gemini", label: "Gemini" },
+  { value: "groq", label: "Groq" },
 ];
 
 // Flat tabs — Practice, Vocab Review, and Log Mistake are deliberately

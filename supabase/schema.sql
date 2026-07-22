@@ -190,15 +190,19 @@ create policy "Users manage their own vocab groups"
 
 -- ============================================================
 -- APP SETTINGS (single row) — currently just which AI provider is active
--- (see lib/anthropic.js, lib/gemini.js). Read on every AI call, so select
--- is open to any client (no secrets here); only an authenticated session can
--- flip it, via the switch in the header (components/AppShell.js).
+-- (see lib/anthropic.js, lib/gemini.js, lib/groq.js). Read on every AI call,
+-- so select is open to any client (no secrets here); only an authenticated
+-- session can flip it, via the switch in the header (components/AppShell.js).
 -- ============================================================
 create table if not exists app_settings (
   id boolean primary key default true check (id),
-  ai_provider text not null default 'anthropic' check (ai_provider in ('anthropic', 'gemini')),
+  ai_provider text not null default 'anthropic' check (ai_provider in ('anthropic', 'gemini', 'groq')),
   updated_at timestamptz not null default now()
 );
+
+-- for installs that already ran the create table above before 'groq' existed
+alter table app_settings drop constraint if exists app_settings_ai_provider_check;
+alter table app_settings add constraint app_settings_ai_provider_check check (ai_provider in ('anthropic', 'gemini', 'groq'));
 
 insert into app_settings (id, ai_provider) values (true, 'anthropic') on conflict (id) do nothing;
 

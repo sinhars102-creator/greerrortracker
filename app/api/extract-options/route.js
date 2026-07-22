@@ -16,7 +16,7 @@ If this question has MULTIPLE separate blanks, each with its own list of options
 
 For each blank, determine the 0-based index/indices of the correct option(s), usually 1 index, except Sentence Equivalence, which always needs exactly 2. Also determine "multiSelect": true if this is a checkbox-style "select all that apply" / "indicate all such..." question where the student can check any number of options (not a fixed count), false otherwise (standard single-answer multiple choice, or Sentence Equivalence's fixed pair).
 
-Respond with ONLY this JSON, no markdown fences:
+Respond with ONLY this JSON — no markdown fences, no preamble or explanation before or after it:
 {"blanks": [{"label": "", "options": ["choice 1", "choice 2", "..."], "correctIndices": [0], "multiSelect": false}]}`;
 
     let content = promptText;
