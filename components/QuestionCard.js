@@ -26,6 +26,17 @@ function numericAnswersMatch(userInput, correctValue) {
   return !Number.isNaN(na) && !Number.isNaN(nc) && Math.abs(na - nc) < 1e-9;
 }
 
+// Guards against stale cached `entry.blanks` from before numeric-entry
+// support existed (or any other malformed shape) — a blank with neither 2+
+// options nor a numericAnswer renders no interactive control at all, so
+// treat it as unusable and fall through to a fresh extraction instead of
+// trusting whatever's cached.
+function blanksAreUsable(blanks) {
+  return Array.isArray(blanks) && blanks.length > 0 && blanks.every((b) => (
+    (Array.isArray(b.options) && b.options.length >= 2) || (typeof b.numericAnswer === "string" && b.numericAnswer.trim())
+  ));
+}
+
 /**
  * Renders one question: pick an answer, check it, move on. Owns all UI
  * state for the current attempt; delegates persistence to the parent via
@@ -38,8 +49,9 @@ function numericAnswersMatch(userInput, correctValue) {
  */
 export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtracted, onEdited, onFinish, onSkip }) {
   const [imageUrl, setImageUrl] = useState(null);
-  const [blanks, setBlanks] = useState(entry.blanks || null);
-  const [loadingBlanks, setLoadingBlanks] = useState(!entry.blanks);
+  const cachedBlanksUsable = blanksAreUsable(entry.blanks);
+  const [blanks, setBlanks] = useState(cachedBlanksUsable ? entry.blanks : null);
+  const [loadingBlanks, setLoadingBlanks] = useState(!cachedBlanksUsable);
   const [error, setError] = useState("");
 
   const [selections, setSelections] = useState({});
@@ -63,7 +75,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
       getScreenshotUrl(entry.imagePath).then(setImageUrl).catch(() => {});
     }
 
-    if (entry.blanks) return;
+    if (cachedBlanksUsable) return;
 
     let cancelled = false;
     (async () => {
