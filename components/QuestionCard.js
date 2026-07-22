@@ -5,6 +5,27 @@ import { getScreenshotUrl } from "@/lib/entries";
 
 const letter = (i) => String.fromCharCode(65 + i);
 
+function evalFraction(s) {
+  const parts = s.split("/");
+  if (parts.length !== 2) return NaN;
+  const n = Number(parts[0]);
+  const d = Number(parts[1]);
+  return !Number.isNaN(n) && !Number.isNaN(d) && d !== 0 ? n / d : NaN;
+}
+
+// Numeric-entry answers are compared by value, not exact string, so "0.75"
+// matches "3/4" and "22.0" matches "22" — GRE numeric-entry questions accept
+// any of these forms interchangeably.
+function numericAnswersMatch(userInput, correctValue) {
+  const a = (userInput || "").trim();
+  const c = (correctValue || "").trim();
+  if (!a) return false;
+  if (a === c) return true;
+  const na = Number(a.includes("/") ? evalFraction(a) : a);
+  const nc = Number(c.includes("/") ? evalFraction(c) : c);
+  return !Number.isNaN(na) && !Number.isNaN(nc) && Math.abs(na - nc) < 1e-9;
+}
+
 /**
  * Renders one question: pick an answer, check it, move on. Owns all UI
  * state for the current attempt; delegates persistence to the parent via
@@ -22,6 +43,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
   const [error, setError] = useState("");
 
   const [selections, setSelections] = useState({});
+  const [numericAnswers, setNumericAnswers] = useState({});
   const [checked, setChecked] = useState(false);
 
   const [solution, setSolution] = useState(entry.solution || null);
@@ -94,12 +116,15 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
   };
 
   const isBlankCorrect = (b, bi) => {
+    if (b.numericAnswer) return numericAnswersMatch(numericAnswers[bi], b.numericAnswer);
     const sel = [...(selections[bi] || [])].sort();
     const correct = [...(b.correctIndices || [])].sort();
     return sel.length === correct.length && sel.every((v, idx) => v === correct[idx]);
   };
 
-  const allSelected = blanks && blanks.every((b, bi) => (selections[bi] || []).length > 0);
+  const allSelected = blanks && blanks.every((b, bi) => (
+    b.numericAnswer ? !!(numericAnswers[bi] || "").trim() : (selections[bi] || []).length > 0
+  ));
   const allCorrect = checked && blanks && blanks.every((b, bi) => isBlankCorrect(b, bi));
 
   const optionColors = (b, bi, i) => {
@@ -127,6 +152,10 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
 
   const updateOptionText = (bi, i, text) => {
     setEditBlanks((prev) => prev.map((b, idx) => (idx !== bi ? b : { ...b, options: b.options.map((o, oi) => (oi === i ? text : o)) })));
+  };
+
+  const updateNumericAnswer = (bi, text) => {
+    setEditBlanks((prev) => prev.map((b, idx) => (idx !== bi ? b : { ...b, numericAnswer: text })));
   };
 
   // Deliberately does NOT reuse blankIsCheckbox here: that helper falls back
@@ -228,34 +257,43 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
         {editBlanks.map((b, bi) => (
           <div key={bi} style={{ marginBottom: 20 }}>
             {b.label && <div style={{ fontSize: 12, color: accent, fontWeight: 700, marginBottom: 8 }}>{b.label}</div>}
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>Edit option text, and click to mark which one(s) are correct.</div>
-            {entry.subtype !== "Sentence Equivalence" && (
-              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 12.5, color: "var(--muted)", cursor: "pointer", textTransform: "none" }}>
-                <input type="checkbox" checked={!!b.multiSelect} onChange={() => toggleEditMultiSelect(bi)} style={{ width: "auto" }} />
-                Select all that apply (more than one correct answer) — unchecking clears current marks
-              </label>
+            {b.numericAnswer !== undefined && b.numericAnswer !== null ? (
+              <>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>Numeric-entry question — no listed options. Edit the correct value.</div>
+                <input value={b.numericAnswer} onChange={(ev) => updateNumericAnswer(bi, ev.target.value)} placeholder="e.g. 22 or 3/4" style={{ maxWidth: 240 }} />
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>Edit option text, and click to mark which one(s) are correct.</div>
+                {entry.subtype !== "Sentence Equivalence" && (
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 12.5, color: "var(--muted)", cursor: "pointer", textTransform: "none" }}>
+                    <input type="checkbox" checked={!!b.multiSelect} onChange={() => toggleEditMultiSelect(bi)} style={{ width: "auto" }} />
+                    Select all that apply (more than one correct answer) — unchecking clears current marks
+                  </label>
+                )}
+                {b.options.map((opt, i) => {
+                  const isCorrect = (b.correctIndices || []).includes(i);
+                  return (
+                    <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontWeight: 700, color: accent, width: 16 }}>{letter(i)}</span>
+                      <input value={opt} onChange={(ev) => updateOptionText(bi, i, ev.target.value)} style={{ flex: 1 }} />
+                      <button
+                        onClick={() => toggleEditCorrect(bi, i)}
+                        className="btn"
+                        style={{
+                          padding: "7px 10px", fontSize: 11.5, whiteSpace: "nowrap",
+                          background: isCorrect ? "var(--sage)" : "var(--panel2)",
+                          color: isCorrect ? "#0F1115" : "var(--muted)",
+                          borderColor: isCorrect ? "var(--sage)" : "var(--border)",
+                        }}
+                      >
+                        {isCorrect ? "✓ Correct" : "Mark correct"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </>
             )}
-            {b.options.map((opt, i) => {
-              const isCorrect = (b.correctIndices || []).includes(i);
-              return (
-                <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                  <span style={{ fontWeight: 700, color: accent, width: 16 }}>{letter(i)}</span>
-                  <input value={opt} onChange={(ev) => updateOptionText(bi, i, ev.target.value)} style={{ flex: 1 }} />
-                  <button
-                    onClick={() => toggleEditCorrect(bi, i)}
-                    className="btn"
-                    style={{
-                      padding: "7px 10px", fontSize: 11.5, whiteSpace: "nowrap",
-                      background: isCorrect ? "var(--sage)" : "var(--panel2)",
-                      color: isCorrect ? "#0F1115" : "var(--muted)",
-                      borderColor: isCorrect ? "var(--sage)" : "var(--border)",
-                    }}
-                  >
-                    {isCorrect ? "✓ Correct" : "Mark correct"}
-                  </button>
-                </div>
-              );
-            })}
           </div>
         ))}
 
@@ -292,24 +330,42 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
       {blanks.map((b, bi) => (
         <div key={bi} style={{ marginBottom: 20 }}>
           {b.label && <div style={{ fontSize: 12, color: accent, fontWeight: 700, marginBottom: 8 }}>{b.label}</div>}
-          {blankIsCheckbox(b) && (
+          {!b.numericAnswer && blankIsCheckbox(b) && (
             <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".03em" }}>Select all that apply</div>
           )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {b.options.map((opt, i) => {
-              const { border, bg } = optionColors(b, bi, i);
-              return (
-                <button key={i} onClick={() => toggleSelect(bi, i)} disabled={checked}
-                  style={{ textAlign: "left", padding: "10px 12px", borderRadius: 5, border: `1px solid ${border}`, background: bg, color: "var(--text)", fontSize: 13.5 }}>
-                  <span style={{ fontWeight: 700, marginRight: 8, color: accent }}>{letter(i)}</span>{opt}
-                </button>
-              );
-            })}
-          </div>
+          {b.numericAnswer ? (
+            <input
+              type="text"
+              value={numericAnswers[bi] || ""}
+              onChange={(e) => setNumericAnswers((prev) => ({ ...prev, [bi]: e.target.value }))}
+              disabled={checked}
+              placeholder="Enter your answer (integer, decimal, or fraction)"
+              style={{
+                padding: "10px 12px", borderRadius: 5, fontSize: 13.5, width: "100%", maxWidth: 260,
+                border: `1px solid ${checked ? (isBlankCorrect(b, bi) ? "var(--sage)" : "var(--red)") : "var(--border)"}`,
+                background: checked ? (isBlankCorrect(b, bi) ? "rgba(107,144,128,0.15)" : "rgba(193,85,75,0.15)") : "var(--panel2)",
+                color: "var(--text)",
+              }}
+            />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {b.options.map((opt, i) => {
+                const { border, bg } = optionColors(b, bi, i);
+                return (
+                  <button key={i} onClick={() => toggleSelect(bi, i)} disabled={checked}
+                    style={{ textAlign: "left", padding: "10px 12px", borderRadius: 5, border: `1px solid ${border}`, background: bg, color: "var(--text)", fontSize: 13.5 }}>
+                    <span style={{ fontWeight: 700, marginRight: 8, color: accent }}>{letter(i)}</span>{opt}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {checked && (
             <div style={{ fontSize: 12.5, fontWeight: 700, marginTop: 8, color: isBlankCorrect(b, bi) ? "var(--sage)" : "var(--red)" }}>
-              {isBlankCorrect(b, bi) ? "Correct" : `Incorrect — correct: ${(b.correctIndices || []).map((i) => letter(i)).join(", ")}`}
+              {isBlankCorrect(b, bi)
+                ? "Correct"
+                : `Incorrect — correct: ${b.numericAnswer ? b.numericAnswer : (b.correctIndices || []).map((i) => letter(i)).join(", ")}`}
             </div>
           )}
           {checked && solutionVisible && solution && solution[bi] && (

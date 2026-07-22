@@ -9,6 +9,9 @@ export async function POST(request) {
     }
 
     const blankBlocks = blanks.map((b, i) => {
+      if (b.numericAnswer) {
+        return `${b.label ? `${b.label}:` : `Blank ${i + 1}:`}\nNumeric-entry question (no listed options) — correct answer: ${b.numericAnswer}`;
+      }
       const optionList = b.options.map((o, oi) => `${oi}: ${o}`).join("\n");
       return `${b.label ? `${b.label}:` : `Blank ${i + 1}:`}\nOptions:\n${optionList}\nCorrect index/indices: ${JSON.stringify(b.correctIndices || [])}`;
     }).join("\n\n");

@@ -16,6 +16,8 @@ If this question has MULTIPLE separate blanks, each with its own list of options
 
 For each blank, determine the 0-based index/indices of the correct option(s), usually 1 index, except Sentence Equivalence, which always needs exactly 2. Also determine "multiSelect": true if this is a checkbox-style "select all that apply" / "indicate all such..." question where the student can check any number of options (not a fixed count), false otherwise (standard single-answer multiple choice, or Sentence Equivalence's fixed pair).
 
+If this is a Quant "numeric entry" question — the student types a number or fraction into a box, with NO listed answer choices at all — do not invent options. Instead return that blank as {"label": "", "options": [], "correctIndices": [], "multiSelect": false, "numericAnswer": "the correct value exactly as it should be entered, e.g. \"22\" or \"3/4\""}, using the student's recorded correct answer above as the value if it looks valid.
+
 Respond with ONLY this JSON — no markdown fences, no preamble or explanation before or after it:
 {"blanks": [{"label": "", "options": ["choice 1", "choice 2", "..."], "correctIndices": [0], "multiSelect": false}]}`;
 
@@ -33,13 +35,22 @@ Respond with ONLY this JSON — no markdown fences, no preamble or explanation b
       return NextResponse.json({ error: `Could not extract answer choices (got: "${raw.trim().slice(0, 140)}")` }, { status: 502 });
     }
     const blanks = parsed.blanks
-      .filter((b) => b && Array.isArray(b.options) && b.options.length >= 2)
-      .map((b) => ({
-        label: typeof b.label === "string" ? b.label : "",
-        options: b.options.map(String),
-        correctIndices: Array.isArray(b.correctIndices) ? b.correctIndices.filter((i) => Number.isInteger(i)) : [],
-        multiSelect: b.multiSelect === true,
-      }));
+      .filter((b) => b && (
+        (Array.isArray(b.options) && b.options.length >= 2)
+        || (typeof b.numericAnswer === "string" && b.numericAnswer.trim())
+      ))
+      .map((b) => {
+        const isNumeric = !(Array.isArray(b.options) && b.options.length >= 2);
+        return isNumeric
+          ? { label: typeof b.label === "string" ? b.label : "", options: [], correctIndices: [], multiSelect: false, numericAnswer: b.numericAnswer.trim() }
+          : {
+              label: typeof b.label === "string" ? b.label : "",
+              options: b.options.map(String),
+              correctIndices: Array.isArray(b.correctIndices) ? b.correctIndices.filter((i) => Number.isInteger(i)) : [],
+              multiSelect: b.multiSelect === true,
+              numericAnswer: null,
+            };
+      });
     if (blanks.length === 0) {
       return NextResponse.json({ error: "Options list came back empty" }, { status: 502 });
     }
