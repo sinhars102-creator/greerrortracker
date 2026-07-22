@@ -78,18 +78,33 @@ export async function finishCapture(correctAnswer) {
     return { error: `Couldn't capture the screenshot: ${e.message}` };
   }
 
+  // The server route has its own 30s budget (maxDuration) — give it a little
+  // longer than that before giving up client-side, so a slow-but-working
+  // request isn't aborted right as the server would've responded. Without
+  // this, a hung/dropped connection left the popup stuck on "Capturing…"
+  // with no way out (see popup.js's force-cancel button for the escape
+  // hatch on top of this).
   let result;
   try {
-    const res = await fetch(`${APP_API_BASE}/api/extension/capture`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ image, section, subtype, correctAnswer }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 40000);
+    let res;
+    try {
+      res = await fetch(`${APP_API_BASE}/api/extension/capture`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ image, section, subtype, correctAnswer }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
     result = await res.json();
     if (!res.ok) throw new Error(result.error || `Request failed (${res.status})`);
   } catch (e) {
     await chrome.storage.local.remove("pendingCapture");
-    return { error: `Couldn't log the question: ${e.message}` };
+    const message = e.name === "AbortError" ? "Timed out after 40s — try again." : e.message;
+    return { error: `Couldn't log the question: ${message}` };
   }
 
   await chrome.storage.local.remove("pendingCapture");

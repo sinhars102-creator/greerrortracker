@@ -13,6 +13,7 @@ const captureControlsEl = document.getElementById("capture-controls");
 const vocabControlsEl = document.getElementById("vocab-controls");
 const vocabWordsInput = document.getElementById("vocab-words");
 const vocabStatusEl = document.getElementById("vocab-status");
+const forceCancelEl = document.getElementById("force-cancel");
 
 function renderPills(container, options, current, onPick) {
   container.innerHTML = "";
@@ -52,6 +53,7 @@ async function render() {
     document.getElementById("submit-answer").disabled = capturing;
     document.getElementById("skip").disabled = capturing;
     answerStatusEl.textContent = capturing ? "Capturing…" : "";
+    forceCancelEl.classList.toggle("hidden", !capturing);
     if (!capturing) answerInput.focus();
     return;
   }
@@ -131,6 +133,14 @@ answerInput.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     cancelCapture().then(render);
   }
+});
+
+// Escape hatch for a request that's taken too long (or a leftover pending
+// state from a previous popup session) — always clickable, even mid-capture,
+// unlike Skip/Save which are disabled while a request is in flight.
+forceCancelEl.addEventListener("click", async () => {
+  await cancelCapture();
+  render();
 });
 
 render();
