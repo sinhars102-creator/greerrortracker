@@ -1,9 +1,16 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Plus, Power, Play, BookOpen, Puzzle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { getAiProvider, setAiProvider } from "@/lib/settings";
+
+const PROVIDERS = [
+  { value: "anthropic", label: "Claude" },
+  { value: "gemini", label: "Gemini" },
+];
 
 const TABS = [
   { href: "/dashboard", label: "Dashboard" },
@@ -23,6 +30,22 @@ const TABS = [
 export default function AppShell({ children }) {
   const pathname = usePathname();
   const router = useRouter();
+  const [provider, setProvider] = useState(null);
+
+  useEffect(() => {
+    getAiProvider().then(setProvider).catch(() => setProvider("anthropic"));
+  }, []);
+
+  const switchProvider = async (value) => {
+    if (value === provider) return;
+    const prev = provider;
+    setProvider(value); // optimistic — this is a low-stakes preference toggle
+    try {
+      await setAiProvider(value);
+    } catch {
+      setProvider(prev);
+    }
+  };
 
   const signOut = async () => {
     const supabase = createClient();
@@ -39,6 +62,24 @@ export default function AppShell({ children }) {
             <h1 className="serif" style={{ margin: 0, fontSize: 26, fontWeight: 600 }}>Mistake Log</h1>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            {provider && (
+              <div className="pills" title="AI model" style={{ display: "flex", gap: 4, border: "1px solid var(--border)", borderRadius: 999, padding: 3 }}>
+                {PROVIDERS.map((p) => (
+                  <button
+                    key={p.value}
+                    onClick={() => switchProvider(p.value)}
+                    style={{
+                      border: "none", borderRadius: 999, padding: "5px 11px", fontSize: 11.5, cursor: "pointer",
+                      background: provider === p.value ? "var(--amber)" : "transparent",
+                      color: provider === p.value ? "#0F1115" : "var(--muted)",
+                      fontWeight: provider === p.value ? 700 : 400,
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            )}
             <Link href="/practice" className="btn" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
               <Play size={15} strokeWidth={2.5} />
               Practice

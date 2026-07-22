@@ -189,6 +189,26 @@ create policy "Users manage their own vocab groups"
   on vocab_groups for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ============================================================
+-- APP SETTINGS (single row) — currently just which AI provider is active
+-- (see lib/anthropic.js, lib/gemini.js). Read on every AI call, so select
+-- is open to any client (no secrets here); only an authenticated session can
+-- flip it, via the switch in the header (components/AppShell.js).
+-- ============================================================
+create table if not exists app_settings (
+  id boolean primary key default true check (id),
+  ai_provider text not null default 'anthropic' check (ai_provider in ('anthropic', 'gemini')),
+  updated_at timestamptz not null default now()
+);
+
+insert into app_settings (id, ai_provider) values (true, 'anthropic') on conflict (id) do nothing;
+
+alter table app_settings enable row level security;
+create policy "Anyone can read the app settings"
+  on app_settings for select using (true);
+create policy "Authenticated users can update the app settings"
+  on app_settings for update using (auth.role() = 'authenticated');
+
+-- ============================================================
 -- updated_at auto-touch trigger for entries
 -- ============================================================
 create or replace function touch_updated_at()
