@@ -33,6 +33,8 @@ create table if not exists entries (
   pending boolean not null default false,
   rc_group_id uuid, -- shared across entries logged together as one Reading Comprehension batch (same passage), so they can be practiced in sequence
   rc_group_order int, -- position of this question within its rc_group_id batch
+  import_source text, -- for PDF-imported entries: a hash+filename identifying the source document, so re-importing the same doc can be deduped; null for manually/extension-logged entries
+  import_ref text, -- for PDF-imported entries: "Section N QX" within import_source, the dedup key alongside it
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -42,10 +44,14 @@ alter table entries add column if not exists solution jsonb;
 -- for installs that already ran the create table above before RC batch grouping existed
 alter table entries add column if not exists rc_group_id uuid;
 alter table entries add column if not exists rc_group_order int;
+-- for installs that already ran the create table above before PDF import existed
+alter table entries add column if not exists import_source text;
+alter table entries add column if not exists import_ref text;
 
 create index if not exists entries_user_id_idx on entries(user_id);
 create index if not exists entries_next_review_idx on entries(user_id, next_review) where not mastered;
 create index if not exists entries_section_idx on entries(user_id, section);
+create index if not exists entries_import_lookup_idx on entries(user_id, import_source, import_ref);
 
 alter table entries enable row level security;
 
@@ -213,6 +219,26 @@ create policy "Authenticated users can update the app settings"
   on app_settings for update using (auth.role() = 'authenticated');
 
 -- ============================================================
+-- PDF SCANS (app/import) — caches the section-structure scan of a PDF,
+-- keyed by a content hash, so re-uploading the same document skips a
+-- redundant Claude call instead of re-scanning it from scratch.
+-- ============================================================
+create table if not exists pdf_scans (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  doc_hash text not null,
+  filename text not null default '',
+  sections jsonb not null default '[]',
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists pdf_scans_user_hash_idx on pdf_scans(user_id, doc_hash);
+
+alter table pdf_scans enable row level security;
+create policy "Users manage their own pdf scans"
+  on pdf_scans for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ============================================================
 -- updated_at auto-touch trigger for entries
 -- ============================================================
 create or replace function touch_updated_at()
@@ -248,3 +274,25 @@ create policy "Users can view their own screenshots"
 create policy "Users can delete their own screenshots"
   on storage.objects for delete
   using (bucket_id = 'screenshots' and auth.uid()::text = (storage.foldername(name))[1]);
+
+-- ============================================================
+-- STORAGE BUCKET for PDF imports (app/import) — holds the source PDF just
+-- long enough for the server to read it for extraction; the app deletes it
+-- afterward.
+--   name: imports, public: false
+-- ============================================================
+insert into storage.buckets (id, name, public)
+values ('imports', 'imports', false)
+on conflict (id) do nothing;
+
+create policy "Users can upload their own import PDFs"
+  on storage.objects for insert
+  with check (bucket_id = 'imports' and auth.uid()::text = (storage.foldername(name))[1]);
+
+create policy "Users can view their own import PDFs"
+  on storage.objects for select
+  using (bucket_id = 'imports' and auth.uid()::text = (storage.foldername(name))[1]);
+
+create policy "Users can delete their own import PDFs"
+  on storage.objects for delete
+  using (bucket_id = 'imports' and auth.uid()::text = (storage.foldername(name))[1]);

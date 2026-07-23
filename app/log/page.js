@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import ImageLightbox from "@/components/ImageLightbox";
 import { createClient } from "@/lib/supabase/client";
@@ -246,6 +247,11 @@ export default function LogPage() {
 
   return (
     <AppShell>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+        <Link href="/import" className="btn" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none" }}>
+          Import from PDF instead
+        </Link>
+      </div>
       <div className="card" style={{ padding: 22 }}>
         <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
           {["Quant", "Verbal"].map((s) => (

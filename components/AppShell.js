@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Power, Play, BookOpen, Puzzle, ChevronDown } from "lucide-react";
+import { Plus, Power, Play, BookOpen, Puzzle, ChevronDown, FileUp } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getAiProvider, setAiProvider } from "@/lib/settings";
 
@@ -13,8 +13,9 @@ const PROVIDERS = [
   { value: "groq", label: "Groq" },
 ];
 
-// Flat tabs — Practice, Vocab Review, and Log Mistake are deliberately
-// excluded here since they already have dedicated buttons in the header.
+// Flat tabs — Practice, Vocab Review, Log Mistake, and Import PDF are
+// deliberately excluded here since they already have dedicated buttons in
+// the header.
 const TABS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/review", label: "Review" },
@@ -186,6 +187,10 @@ export default function AppShell({ children }) {
             <Link href="/vocab" className="btn" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
               <BookOpen size={15} strokeWidth={2.5} />
               Vocab Review
+            </Link>
+            <Link href="/import" className="btn" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
+              <FileUp size={15} strokeWidth={2.5} />
+              Import PDF
             </Link>
             <Link href="/log" className="btn btn-primary" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
               <Plus size={15} strokeWidth={2.5} />
