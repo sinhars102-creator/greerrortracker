@@ -38,21 +38,63 @@ function parseSourceFromParams(params) {
   return null;
 }
 
+// In-progress sessions survive a tab close/reload/nav-away — closing mid-way
+// through 125 questions and losing the "already answered" set meant they'd
+// all resurface next time (no due-date gating to naturally push them out).
+function sessionKey(section) { return `review_session_${section}`; }
+function loadSavedSession(section) {
+  if (typeof window === "undefined") return null;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(sessionKey(section)));
+    return parsed && parsed.source ? parsed : null;
+  } catch { return null; }
+}
+function saveSession(section, source, answeredIds, skippedIds) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(sessionKey(section), JSON.stringify({ source, answeredIds: [...answeredIds], skippedIds: [...skippedIds] }));
+  } catch { /* storage full/unavailable — session just won't resume */ }
+}
+function clearSession(section) {
+  if (typeof window === "undefined") return;
+  try { localStorage.removeItem(sessionKey(section)); } catch {}
+}
+
+// A Dashboard deep link always wins and starts a fresh session; otherwise
+// resume whatever was saved for this section, if anything.
+function computeInitialState(searchParams) {
+  const section = SECTIONS.includes(searchParams.get("section")) ? searchParams.get("section") : "Verbal";
+  const deepLinkSource = parseSourceFromParams(searchParams);
+  const saved = deepLinkSource ? null : loadSavedSession(section);
+  return {
+    section,
+    source: deepLinkSource || (saved && saved.source) || null,
+    started: !!deepLinkSource || !!saved,
+    answeredIds: new Set(saved ? saved.answeredIds : []),
+    skippedIds: new Set(saved ? saved.skippedIds : []),
+  };
+}
+
 function ReviewPageInner() {
   const searchParams = useSearchParams();
   const [entries, setEntries] = useState(null);
-  const [section, setSection] = useState(() => (SECTIONS.includes(searchParams.get("section")) ? searchParams.get("section") : "Verbal"));
+  const [initial] = useState(() => computeInitialState(searchParams));
+  const [section, setSection] = useState(initial.section);
   const [mode, setMode] = useState(null); // null | "tierwise" — only used for the setup UI, not deep links
-  // A source parseable synchronously from the URL on first render (Dashboard
-  // deep link) means starting straight into practicing, no setup screen —
-  // entries just aren't loaded yet, same as any other page-load moment.
-  const [source, setSource] = useState(() => parseSourceFromParams(searchParams));
-  const [started, setStarted] = useState(() => !!parseSourceFromParams(searchParams));
-  const [skippedIds, setSkippedIds] = useState(() => new Set());
-  const [answeredIds, setAnsweredIds] = useState(() => new Set());
+  const [source, setSource] = useState(initial.source);
+  const [started, setStarted] = useState(initial.started);
+  const [skippedIds, setSkippedIds] = useState(initial.skippedIds);
+  const [answeredIds, setAnsweredIds] = useState(initial.answeredIds);
 
   const refresh = () => listEntries().then(setEntries);
   useEffect(() => { refresh(); }, []);
+
+  // Persist progress as it happens, so an exit mid-session (tab close,
+  // reload, navigating away) can pick back up where it left off.
+  useEffect(() => {
+    if (!started || !source) return;
+    saveSession(section, source, answeredIds, skippedIds);
+  }, [section, source, started, answeredIds, skippedIds]);
 
   const bySection = useMemo(() => (entries || []).filter((e) => e.section === section && !e.pending), [entries, section]);
   const tiers = useMemo(() => buildTiers(bySection), [bySection]);
@@ -72,6 +114,12 @@ function ReviewPageInner() {
   // this session.
   const remaining = queue.filter((e) => !answeredIds.has(e.id) && !skippedIds.has(e.id));
   const current = started ? remaining[0] : null;
+
+  // Truly nothing left (not even skipped ones to revisit) — no reason to
+  // keep a resumable session around for an empty queue.
+  useEffect(() => {
+    if (started && entries && !current && skippedIds.size === 0) clearSession(section);
+  }, [started, entries, current, skippedIds.size, section]);
 
   const handleSkip = () => setSkippedIds((prev) => new Set(prev).add(current.id));
 
@@ -106,6 +154,7 @@ function ReviewPageInner() {
   };
 
   const backToSetup = () => {
+    clearSession(section);
     setStarted(false);
     setSource(null);
     setMode(null);
@@ -210,7 +259,10 @@ function ReviewPageInner() {
 
   return (
     <AppShell>
-      <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14 }}>{remaining.length} left{skippedIds.size > 0 ? ` · ${skippedIds.size} skipped` : ""}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
+        <div style={{ fontSize: 13, color: "var(--muted)" }}>{remaining.length} left{skippedIds.size > 0 ? ` · ${skippedIds.size} skipped` : ""}</div>
+        <button className="btn" style={{ fontSize: 11.5, padding: "5px 10px" }} onClick={backToSetup}>Exit session</button>
+      </div>
       <QuestionCard
         key={current.id}
         entry={current}
