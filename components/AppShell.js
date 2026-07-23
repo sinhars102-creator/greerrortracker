@@ -10,6 +10,7 @@ import { getAiProvider, setAiProvider } from "@/lib/settings";
 const PROVIDERS = [
   { value: "anthropic", label: "Claude" },
   { value: "gemini", label: "Gemini" },
+  { value: "openai", label: "OpenAI" },
   { value: "groq", label: "Groq" },
 ];
 
