@@ -34,7 +34,8 @@ function EntriesPageInner() {
   // A matching card just won't show as expanded if the id turns out to be stale.
   const [expanded, setExpanded] = useState(() => searchParams.get("entry"));
   const [entries, setEntries] = useState(null);
-  const [filterSection, setFilterSection] = useState("All");
+  // Deep-linked from the Dashboard's "total logged" tiles via ?section=Quant|Verbal.
+  const [filterSection, setFilterSection] = useState(() => (["Quant", "Verbal"].includes(searchParams.get("section")) ? searchParams.get("section") : "All"));
   const [search, setSearch] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState(null);

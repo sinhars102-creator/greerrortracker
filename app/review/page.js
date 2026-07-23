@@ -1,13 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import QuestionCard from "@/components/QuestionCard";
 import { listEntries, updateEntry, groupForSequentialPractice } from "@/lib/entries";
+import { buildTiers, flattenTiers, resolveSource, RECENT_DAYS } from "@/lib/practiceFilters";
 
 const INTERVALS = [1, 3, 7, 14, 30];
-const RECENT_DAYS = 3;
 const SECTIONS = ["Verbal", "Quant"];
+const TIER_INFO = [
+  { key: "recent", label: `Recent (last ${RECENT_DAYS} days)` },
+  { key: "mistakes", label: "Mistakes" },
+  { key: "neverAttempted", label: "Never attempted" },
+  { key: "rest", label: "Rest (oldest first)" },
+];
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function addDays(iso, days) {
@@ -16,57 +23,47 @@ function addDays(iso, days) {
   return d.toISOString().slice(0, 10);
 }
 
-// Practice ordering (no due-date gating, replaces spaced-repetition
-// scheduling as the thing that decides order — see conversation for the
-// full rationale):
-//   1. Logged today or in the last RECENT_DAYS days — newest first.
-//   2. "Mistakes" — ever gotten wrong (worst offenders first), then never
-//      attempted at all. Membership here is permanent: once wrongAttempts
-//      is > 0 it stays a mistake even after later correct reviews.
-//   3. Everything else (attempted, never gotten wrong, including mastered
-//      entries which never drop out) — oldest-logged first.
-// No cap: the full pool is included every session, just reordered.
-function buildPracticeQueue(entries) {
-  const recentCutoff = addDays(todayISO(), -RECENT_DAYS);
-  const tier1 = [];
-  const tier2Missed = [];
-  const tier2New = [];
-  const tier3 = [];
-
-  for (const e of entries) {
-    const createdDate = (e.createdAt || "").slice(0, 10);
-    if (createdDate >= recentCutoff) { tier1.push(e); continue; }
-    if ((e.wrongAttempts || 0) > 0) { tier2Missed.push(e); continue; }
-    if (!e.totalAttempts) { tier2New.push(e); continue; }
-    tier3.push(e);
+// Reads a Dashboard deep-link, e.g. /review?section=Quant&source=staleWindow&days=5
+function parseSourceFromParams(params) {
+  const type = params.get("source");
+  if (!type || type === "all") return type === "all" ? { type: "all" } : null;
+  if (type === "tier") {
+    const tier = params.get("tier");
+    return TIER_INFO.some((t) => t.key === tier) ? { type: "tier", tier } : null;
   }
-
-  tier1.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-  tier2Missed.sort((a, b) => (b.wrongAttempts || 0) - (a.wrongAttempts || 0));
-  tier2New.sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
-  tier3.sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
-
-  return [...tier1, ...tier2Missed, ...tier2New, ...tier3];
+  if (type === "loggedWindow" || type === "staleWindow") {
+    const days = parseInt(params.get("days"), 10);
+    return { type, days: Number.isFinite(days) && days > 0 ? days : RECENT_DAYS };
+  }
+  return null;
 }
 
-export default function ReviewPage() {
+function ReviewPageInner() {
+  const searchParams = useSearchParams();
   const [entries, setEntries] = useState(null);
-  const [section, setSection] = useState("Verbal");
-  const [started, setStarted] = useState(false);
+  const [section, setSection] = useState(() => (SECTIONS.includes(searchParams.get("section")) ? searchParams.get("section") : "Verbal"));
+  const [mode, setMode] = useState(null); // null | "tierwise" — only used for the setup UI, not deep links
+  // A source parseable synchronously from the URL on first render (Dashboard
+  // deep link) means starting straight into practicing, no setup screen —
+  // entries just aren't loaded yet, same as any other page-load moment.
+  const [source, setSource] = useState(() => parseSourceFromParams(searchParams));
+  const [started, setStarted] = useState(() => !!parseSourceFromParams(searchParams));
   const [skippedIds, setSkippedIds] = useState(() => new Set());
   const [answeredIds, setAnsweredIds] = useState(() => new Set());
 
   const refresh = () => listEntries().then(setEntries);
   useEffect(() => { refresh(); }, []);
 
+  const bySection = useMemo(() => (entries || []).filter((e) => e.section === section && !e.pending), [entries, section]);
+  const tiers = useMemo(() => buildTiers(bySection), [bySection]);
+
   const queue = useMemo(() => {
     if (!entries) return [];
-    const bySection = entries.filter((e) => e.section === section && !e.pending);
-    const ordered = buildPracticeQueue(bySection);
+    const ordered = resolveSource(bySection, source);
     // Keep Reading Comprehension batches adjacent and in sequence, rather
-    // than scattered wherever they land in the tiered order.
+    // than scattered wherever they land in the tiered/filtered order.
     return groupForSequentialPractice(ordered).flat();
-  }, [entries, section]);
+  }, [entries, bySection, source]);
 
   // Answering a question doesn't remove it from the underlying pool (there's
   // no due-date gating anymore to naturally push it out), so track what's
@@ -101,9 +98,22 @@ export default function ReviewPage() {
     await refresh();
   };
 
+  const startWithSource = (src) => {
+    setSource(src);
+    setSkippedIds(new Set());
+    setAnsweredIds(new Set());
+    setStarted(true);
+  };
+
+  const backToSetup = () => {
+    setStarted(false);
+    setSource(null);
+    setMode(null);
+  };
+
   if (!entries) return <AppShell><div style={{ color: "var(--muted)" }}>Loading…</div></AppShell>;
 
-  if (queue.length === 0) {
+  if (bySection.length === 0 && !started) {
     return (
       <AppShell>
         <div className="card" style={{ padding: "40px 24px", textAlign: "center" }}>
@@ -123,14 +133,61 @@ export default function ReviewPage() {
     return (
       <AppShell>
         <div className="card" style={{ padding: 22 }}>
-          <div className="pills" style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <div className="pills" style={{ display: "flex", gap: 8, marginBottom: 20 }}>
             {SECTIONS.map((s) => (
-              <button key={s} className={"pill" + (s === section ? " active" : "")} onClick={() => setSection(s)}>{s}</button>
+              <button key={s} className={"pill" + (s === section ? " active" : "")} onClick={() => { setSection(s); setMode(null); }}>{s}</button>
             ))}
           </div>
-          <div className="serif" style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>{queue.length} to practice</div>
-          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>Recent + mistakes first, then the rest oldest-first. No due dates — the whole {section} pool, reordered.</div>
-          <button className="btn btn-primary" onClick={() => { setSkippedIds(new Set()); setAnsweredIds(new Set()); setStarted(true); }}>Start practice</button>
+
+          {mode === null && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <button
+                className="card"
+                style={{ padding: 18, textAlign: "left", cursor: "pointer", border: "1px solid var(--border)", width: "100%" }}
+                onClick={() => startWithSource({ type: "all" })}
+              >
+                <div className="serif" style={{ fontSize: 17, fontWeight: 600, marginBottom: 4 }}>Complete Review</div>
+                <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                  {flattenTiers(tiers).length} to practice — recent + mistakes first, then the rest oldest-first. No cap.
+                </div>
+              </button>
+              <button
+                className="card"
+                style={{ padding: 18, textAlign: "left", cursor: "pointer", border: "1px solid var(--border)", width: "100%" }}
+                onClick={() => setMode("tierwise")}
+              >
+                <div className="serif" style={{ fontSize: 17, fontWeight: 600, marginBottom: 4 }}>Tier-wise Review</div>
+                <div style={{ fontSize: 13, color: "var(--muted)" }}>Pick exactly one tier to practice today.</div>
+              </button>
+            </div>
+          )}
+
+          {mode === "tierwise" && (
+            <div>
+              <button className="btn" onClick={() => setMode(null)} style={{ marginBottom: 14, fontSize: 12 }}>← Back</button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {TIER_INFO.map((t) => {
+                  const count = tiers[t.key].length;
+                  return (
+                    <button
+                      key={t.key}
+                      className="card"
+                      style={{
+                        padding: 16, textAlign: "left", border: "1px solid var(--border)", width: "100%",
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        cursor: count ? "pointer" : "default", opacity: count ? 1 : 0.5,
+                      }}
+                      onClick={() => count && startWithSource({ type: "tier", tier: t.key })}
+                      disabled={!count}
+                    >
+                      <span style={{ fontSize: 14 }}>{t.label}</span>
+                      <span className="mono" style={{ fontSize: 18, fontWeight: 700, color: count ? "var(--amber)" : "var(--muted)" }}>{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </AppShell>
     );
@@ -144,7 +201,7 @@ export default function ReviewPage() {
           <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 18 }}>{answeredIds.size} answered{skippedIds.size > 0 ? ` · ${skippedIds.size} skipped` : ""} this session.</div>
           <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
             {skippedIds.size > 0 && <button className="btn btn-primary" onClick={() => setSkippedIds(new Set())}>Go through skipped again</button>}
-            <button className="btn" onClick={() => setStarted(false)}>Back to setup</button>
+            <button className="btn" onClick={backToSetup}>Back to setup</button>
           </div>
         </div>
       </AppShell>
@@ -164,5 +221,13 @@ export default function ReviewPage() {
         onSkip={handleSkip}
       />
     </AppShell>
+  );
+}
+
+export default function ReviewPage() {
+  return (
+    <Suspense fallback={<AppShell><div style={{ color: "var(--muted)" }}>Loading…</div></AppShell>}>
+      <ReviewPageInner />
+    </Suspense>
   );
 }

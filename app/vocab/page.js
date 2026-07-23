@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -82,7 +83,8 @@ async function defineWords(words) {
 
 const eyebrow = { fontSize: 11, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--muted)" };
 
-export default function VocabReviewPage() {
+function VocabReviewPageInner() {
+  const searchParams = useSearchParams();
   const [stage, setStage] = useState("setup"); // setup | quiz | grading | clarify | result | done | browse
   const [rawInput, setRawInput] = useState("");
   const [queue, setQueue] = useState([]);
@@ -131,6 +133,18 @@ export default function VocabReviewPage() {
       }
     })();
   }, []);
+
+  // Deep-linked from the Dashboard's vocab tiles via ?words=Word1,Word2 —
+  // jump straight into a session on exactly that word list once loaded.
+  useEffect(() => {
+    if (!loaded) return;
+    const wordsParam = searchParams.get("words");
+    if (!wordsParam) return;
+    const names = wordsParam.split(",").map((s) => s.trim()).filter(Boolean);
+    const found = names.map((n) => wordMap[n.toLowerCase()]).filter(Boolean);
+    if (found.length) startSession(found);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
 
   useEffect(() => {
     if (stage === "quiz" && inputRef.current) inputRef.current.focus();
@@ -742,5 +756,13 @@ export default function VocabReviewPage() {
         </div>
       )}
     </AppShell>
+  );
+}
+
+export default function VocabReviewPage() {
+  return (
+    <Suspense fallback={<AppShell><div style={{ color: "var(--muted)" }}>Loading…</div></AppShell>}>
+      <VocabReviewPageInner />
+    </Suspense>
   );
 }

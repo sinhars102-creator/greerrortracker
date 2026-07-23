@@ -65,12 +65,14 @@ export async function POST(request) {
     try {
       const result = await extractQuestionFromImage({ image, subtype, needsPassage });
       if (result.error) {
+        console.error("[extension/capture] extraction returned error:", result.error);
         extractionFailed = true;
       } else {
         questionText = result.questionText || "(see screenshot)";
         passage = result.passage || "";
       }
-    } catch {
+    } catch (extractErr) {
+      console.error("[extension/capture] extraction threw:", extractErr);
       extractionFailed = true;
     }
 
