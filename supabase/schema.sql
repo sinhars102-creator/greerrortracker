@@ -202,13 +202,13 @@ create policy "Users manage their own vocab groups"
 -- ============================================================
 create table if not exists app_settings (
   id boolean primary key default true check (id),
-  ai_provider text not null default 'anthropic' check (ai_provider in ('anthropic', 'gemini', 'groq')),
+  ai_provider text not null default 'anthropic' check (ai_provider in ('anthropic', 'gemini', 'openai', 'groq')),
   updated_at timestamptz not null default now()
 );
 
--- for installs that already ran the create table above before 'groq' existed
+-- for installs that already ran the create table above before 'groq'/'openai' existed
 alter table app_settings drop constraint if exists app_settings_ai_provider_check;
-alter table app_settings add constraint app_settings_ai_provider_check check (ai_provider in ('anthropic', 'gemini', 'groq'));
+alter table app_settings add constraint app_settings_ai_provider_check check (ai_provider in ('anthropic', 'gemini', 'openai', 'groq'));
 
 insert into app_settings (id, ai_provider) values (true, 'anthropic') on conflict (id) do nothing;
 
