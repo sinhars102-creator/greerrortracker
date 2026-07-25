@@ -326,6 +326,13 @@ function VocabReviewPageInner() {
     startSession(due);
   }
 
+  function loadBucket(bucket) {
+    setError("");
+    const inBucket = allWords.filter((x) => progress[x.w] && progress[x.w].bucket === bucket);
+    if (inBucket.length === 0) return;
+    startSession(inBucket);
+  }
+
   async function submitAnswer() {
     if (!answer.trim()) return;
     setStage("grading");
@@ -504,6 +511,23 @@ function VocabReviewPageInner() {
             <button className="btn" onClick={loadAll}>Load all ({allWords.length})</button>
             <button className="btn" onClick={loadDue}>Load due now ({dueNowCount})</button>
             <button className="btn" onClick={() => { setCopyMsg(""); setStage("browse"); }}>View full list &amp; status</button>
+          </div>
+
+          <div style={{ marginTop: 14 }}>
+            <div style={{ ...eyebrow, marginBottom: 8 }}>Or review one bucket at a time</div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {["learning", "revise", "learnt"].map((k) => (
+                <button
+                  key={k}
+                  className="btn"
+                  style={{ opacity: bucketCounts[k] ? 1 : 0.5, cursor: bucketCounts[k] ? "pointer" : "default", borderColor: bucketCounts[k] ? BUCKET_INFO[k].color : undefined }}
+                  onClick={() => loadBucket(k)}
+                  disabled={!bucketCounts[k]}
+                >
+                  {BUCKET_INFO[k].label} ({bucketCounts[k]})
+                </button>
+              ))}
+            </div>
           </div>
 
           <div style={{ borderTop: "1px solid var(--border)", marginTop: 22, paddingTop: 18 }}>
