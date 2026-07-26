@@ -10,8 +10,8 @@ import { buildTiers, flattenTiers, resolveSource, RECENT_DAYS } from "@/lib/prac
 const INTERVALS = [1, 3, 7, 14, 30];
 const SECTIONS = ["Verbal", "Quant"];
 const TIER_INFO = [
-  { key: "recent", label: `Recent (last ${RECENT_DAYS} days)` },
   { key: "mistakes", label: "Mistakes" },
+  { key: "recent", label: `Recent (last ${RECENT_DAYS} days)` },
   { key: "neverAttempted", label: "Never attempted" },
   { key: "rest", label: "Rest (oldest first)" },
 ];
