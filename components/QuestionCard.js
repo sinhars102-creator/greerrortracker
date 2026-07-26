@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getScreenshotUrl } from "@/lib/entries";
+import { getScreenshotUrl, uploadScreenshot, compressImageDataUrl, dataUrlToBlobAndParts } from "@/lib/entries";
+import { createClient } from "@/lib/supabase/client";
+import { EXTRACTION_VERSION } from "@/lib/extractionVersion";
 
 const letter = (i) => String.fromCharCode(65 + i);
 
@@ -30,10 +32,14 @@ function numericAnswersMatch(userInput, correctValue) {
 // support existed (or any other malformed shape) — a blank with neither 2+
 // options nor a numericAnswer renders no interactive control at all, so
 // treat it as unusable and fall through to a fresh extraction instead of
-// trusting whatever's cached.
+// trusting whatever's cached. Also rejects blanks extracted under an older
+// EXTRACTION_VERSION (e.g. before the "trust the recorded answer" prompt
+// fix) so a bad cached grading gets silently re-extracted and corrected
+// instead of staying wrong forever.
 function blanksAreUsable(blanks) {
   return Array.isArray(blanks) && blanks.length > 0 && blanks.every((b) => (
-    (Array.isArray(b.options) && b.options.length >= 2) || (typeof b.numericAnswer === "string" && b.numericAnswer.trim())
+    b._v === EXTRACTION_VERSION
+    && ((Array.isArray(b.options) && b.options.length >= 2) || (typeof b.numericAnswer === "string" && b.numericAnswer.trim()))
   ));
 }
 
@@ -68,43 +74,92 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
   const [editPassage, setEditPassage] = useState(entry.passage || "");
   const [editBlanks, setEditBlanks] = useState(null);
 
+  const [needsScreenshot, setNeedsScreenshot] = useState(false);
+  const [uploadingScreenshot, setUploadingScreenshot] = useState(false);
+
   const accent = entry.section === "Quant" ? "var(--quant)" : "var(--verbal)";
+
+  const extractOptions = async (signedUrlOverride) => {
+    setLoadingBlanks(true);
+    setError("");
+    setNeedsScreenshot(false);
+    try {
+      let signedUrl = signedUrlOverride;
+      if (signedUrl === undefined && entry.hasImage && entry.imagePath) {
+        signedUrl = await getScreenshotUrl(entry.imagePath).catch(() => null);
+      }
+      const res = await fetch("/api/extract-options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entry, image: null, imageUrl: signedUrl || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 422) setNeedsScreenshot(true);
+        throw new Error(data.error);
+      }
+      setBlanks(data.blanks);
+      onBlanksExtracted?.(data.blanks);
+    } catch (e) {
+      setError(e.message || "Couldn't extract answer choices");
+    } finally {
+      setLoadingBlanks(false);
+    }
+  };
+
+  const retryWithScreenshot = async (file) => {
+    if (!file) return;
+    setUploadingScreenshot(true);
+    setError("");
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const compressed = await compressImageDataUrl(dataUrl, 1600, 0.85);
+      const parts = dataUrlToBlobAndParts(compressed);
+      const path = await uploadScreenshot(user.id, entry.id, parts.blob);
+      const signedUrl = await getScreenshotUrl(path);
+      onEdited?.({ hasImage: true, imagePath: path });
+      setImageUrl(signedUrl);
+      await extractOptions(signedUrl);
+    } catch (e) {
+      setError(e.message || "Couldn't attach screenshot");
+    } finally {
+      setUploadingScreenshot(false);
+    }
+  };
 
   useEffect(() => {
     if (entry.hasImage && entry.imagePath) {
       getScreenshotUrl(entry.imagePath).then(setImageUrl).catch(() => {});
     }
-
-    if (cachedBlanksUsable) return;
-
-    let cancelled = false;
-    (async () => {
-      try {
-        let signedUrl = null;
-        if (entry.hasImage && entry.imagePath) {
-          signedUrl = await getScreenshotUrl(entry.imagePath).catch(() => null);
-        }
-        const res = await fetch("/api/extract-options", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entry, image: null, imageUrl: signedUrl }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-        if (cancelled) return;
-        setBlanks(data.blanks);
-        onBlanksExtracted?.(data.blanks);
-      } catch (e) {
-        if (!cancelled) setError(e.message || "Couldn't extract answer choices");
-      } finally {
-        if (!cancelled) setLoadingBlanks(false);
-      }
-    })();
-    return () => { cancelled = true; };
+    // Kicks off an async fetch; the setState calls inside it report the
+    // fetch's progress, not a synchronous render-time state sync.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!cachedBlanksUsable) extractOptions();
     // Mount-only: the parent keys this component by entry.id, so a new
     // question means a fresh mount, not a re-run of this effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Lets a copied screenshot (Ctrl+V) attach directly, instead of requiring
+  // a save-to-disk-then-upload round trip through the file picker.
+  useEffect(() => {
+    if (!needsScreenshot) return;
+    const handlePaste = (e) => {
+      const item = Array.from(e.clipboardData?.items || []).find((i) => i.type.startsWith("image/"));
+      const file = item?.getAsFile();
+      if (file) retryWithScreenshot(file);
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsScreenshot]);
 
   // Sentence Equivalence is always exactly 2. "Select all that apply" /
   // checkbox questions (b.multiSelect) allow any number, at least 1 — fall
@@ -236,8 +291,30 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
   if (error) {
     return (
       <div className="card" style={{ padding: 18, borderLeft: `3px solid ${accent}` }}>
-        <div style={{ fontSize: 13, color: "var(--red)", marginBottom: 14 }}>{error}</div>
-        <button className="btn" onClick={onSkip}>Skip</button>
+        <div style={{ fontSize: 13, color: "var(--red)", marginBottom: 14 }}>
+          {needsScreenshot ? "This question was never captured — no screenshot and no transcribed text were saved for it." : error}
+        </div>
+        {needsScreenshot && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
+              {entry.importRef && <div><b>{entry.importRef}</b>{entry.importSource ? ` — ${entry.importSource}` : ""}</div>}
+              <div>{entry.section} · {entry.subtype}</div>
+              {entry.correctAnswer && <div>Recorded answer: {entry.correctAnswer}</div>}
+              {entry.createdAt && <div>Logged: {new Date(entry.createdAt).toLocaleString()}</div>}
+            </div>
+            <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
+              Paste (Ctrl+V) a screenshot to reattempt this question, or choose a file:
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              disabled={uploadingScreenshot}
+              onChange={(e) => retryWithScreenshot(e.target.files?.[0])}
+            />
+            {uploadingScreenshot && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>Uploading &amp; reattempting…</div>}
+          </div>
+        )}
+        <button className="btn" onClick={onSkip} disabled={uploadingScreenshot}>Skip</button>
       </div>
     );
   }

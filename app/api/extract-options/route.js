@@ -1,10 +1,21 @@
 import { NextResponse } from "next/server";
 import { callClaude, extractJSON, imageUrlToContentBlock } from "@/lib/anthropic";
+import { EXTRACTION_VERSION } from "@/lib/extractionVersion";
 
 export async function POST(request) {
   try {
     const { entry, image, imageUrl } = await request.json();
     const hasImage = !!image || !!imageUrl;
+
+    // No screenshot and no real transcribed text (this entry's original
+    // transcription failed and left the "(see screenshot)" placeholder) —
+    // there's nothing here to extract options from. Calling the model on
+    // this would just produce garbage (it tends to echo the prompt's own
+    // JSON example, "choice 1"/"choice 2"/...), so fail clearly instead.
+    const questionText = (entry.questionText || "").trim();
+    if (!hasImage && (!questionText || questionText === "(see screenshot)")) {
+      return NextResponse.json({ error: "This entry has no screenshot and no transcribed question text to work from — edit it manually to add the question, or delete and re-log it." }, { status: 422 });
+    }
 
     const promptText = `Extract the answer-choice structure for this GRE question as JSON.
 
@@ -51,13 +62,14 @@ Respond with ONLY this JSON — no markdown fences, no preamble or explanation b
       .map((b) => {
         const isNumeric = !(Array.isArray(b.options) && b.options.length >= 2);
         return isNumeric
-          ? { label: typeof b.label === "string" ? b.label : "", options: [], correctIndices: [], multiSelect: false, numericAnswer: b.numericAnswer.trim() }
+          ? { label: typeof b.label === "string" ? b.label : "", options: [], correctIndices: [], multiSelect: false, numericAnswer: b.numericAnswer.trim(), _v: EXTRACTION_VERSION }
           : {
               label: typeof b.label === "string" ? b.label : "",
               options: b.options.map(String),
               correctIndices: Array.isArray(b.correctIndices) ? b.correctIndices.filter((i) => Number.isInteger(i)) : [],
               multiSelect: b.multiSelect === true,
               numericAnswer: null,
+              _v: EXTRACTION_VERSION,
             };
       });
     if (blanks.length === 0) {
