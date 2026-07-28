@@ -2,6 +2,64 @@ import { NextResponse } from "next/server";
 import { callClaude, extractJSON, imageUrlToContentBlock } from "@/lib/anthropic";
 import { EXTRACTION_VERSION } from "@/lib/extractionVersion";
 
+function letterIndex(letter) {
+  const c = letter.toUpperCase().charCodeAt(0) - 65;
+  return c >= 0 && c <= 25 ? c : -1;
+}
+
+function normalizeText(s) {
+  return (s || "").toLowerCase().trim().replace(/[.,;:!?]+$/, "");
+}
+
+function matchTextIndex(raw, options) {
+  const target = normalizeText(raw);
+  if (!target) return -1;
+  let idx = options.findIndex((o) => normalizeText(o) === target);
+  if (idx === -1) idx = options.findIndex((o) => normalizeText(o).includes(target) || target.includes(normalizeText(o)));
+  return idx;
+}
+
+// Deterministically resolves which option(s) are correct from the
+// student's own recorded answer — no AI judgment involved. The recorded
+// answer is already ground truth; it's never re-derived or "rechecked",
+// only matched to a transcribed option index in plain code.
+function resolveCorrectIndices(rawAnswer, blanksOptions) {
+  const trimmed = (rawAnswer || "").trim();
+  const numBlanks = blanksOptions.length;
+  if (!trimmed) return blanksOptions.map(() => []);
+
+  if (numBlanks > 1) {
+    const letters = trimmed.match(/[A-Za-z]/g);
+    if (letters && letters.length === numBlanks) {
+      const indices = letters.map((L, i) => {
+        const idx = letterIndex(L);
+        return idx >= 0 && idx < blanksOptions[i].length ? idx : -1;
+      });
+      if (indices.every((i) => i >= 0)) return indices.map((i) => [i]);
+    }
+    // Can't confidently split one recorded string across multiple blanks —
+    // leave unmapped rather than guess.
+    return blanksOptions.map(() => []);
+  }
+
+  const options = blanksOptions[0];
+  // One or more comma/and-separated single letters (Sentence Equivalence,
+  // or a multi-select answer like "B, D"), or a bare run like "BD"/"C".
+  const listMatch = trimmed.match(/^[A-Za-z](?:\s*(?:,|and|&)\s*[A-Za-z])*$/i);
+  const bareMatch = /^[A-Za-z]{1,2}$/.test(trimmed);
+  let letters = null;
+  if (listMatch) letters = trimmed.match(/[A-Za-z]/g);
+  else if (bareMatch) letters = trimmed.toUpperCase().split("");
+
+  if (letters) {
+    const indices = letters.map((L) => letterIndex(L)).filter((i) => i >= 0 && i < options.length);
+    if (indices.length === letters.length) return [indices];
+  }
+
+  const idx = matchTextIndex(trimmed, options);
+  return [idx >= 0 ? [idx] : []];
+}
+
 export async function POST(request) {
   try {
     const { entry, image, imageUrl } = await request.json();
@@ -17,29 +75,26 @@ export async function POST(request) {
       return NextResponse.json({ error: "This entry has no screenshot and no transcribed question text to work from — edit it manually to add the question, or delete and re-log it." }, { status: 422 });
     }
 
-    const promptText = `Extract the answer-choice structure for this GRE question as JSON.
+    // This prompt is transcription-only — it never asks the model to judge
+    // or re-derive which option is correct. The recorded correctAnswer is
+    // the student's own ground truth; matching it to an option index is
+    // done deterministically in code below (see resolveCorrectIndices),
+    // not by asking the model to "recheck" an answer that's already known.
+    const promptText = `Transcribe the answer-choice structure for this GRE question as JSON. This is transcription only — do not determine or judge which option is correct.
 
 Question type: ${entry.subtype}
 ${(entry.passage || "").trim() ? `Passage:\n${entry.passage.slice(0, 4000)}\n\n` : ""}${hasImage ? "Question: attached as a screenshot image — read the question and all answer choices from it." : `Question: ${(entry.questionText || "").slice(0, 1200)}`}
-The student recorded the correct answer, from the official answer key, as: ${entry.correctAnswer || "(not recorded)"}
 
 If this question has MULTIPLE separate blanks, each with its own list of options, return one entry in "blanks" per blank, each with its own "options" array and a short "label" (e.g. "Blank (i)"). Otherwise return exactly one entry with "label" set to an empty string.
 
-For each blank, determine the 0-based index/indices of the correct option(s), usually 1 index, except Sentence Equivalence, which always needs exactly 2.
-
-IMPORTANT — the recorded answer above is ground truth from the official key, not a guess. Do NOT independently re-solve the question and substitute your own judgment, even if you think a different option reads better — GRE questions are frequently subtle enough that a plausible-sounding option is a deliberate trap, and the recorded answer is correct. Your job is to MATCH the recorded answer to the right option index/indices in what you transcribe, not to re-derive it. Parse the recorded answer as follows:
-- One blank, one letter (e.g. "C"): that option is correct.
-- One blank, multiple letters/values (e.g. "B and D", "B, C"): all of those options are correct (multiSelect).
-- Multiple blanks: the recorded answer should give one letter per blank, in the same left-to-right/top-to-bottom order as the blanks appear — however it's delimited, whether "B, B, C", "B B C", or run together with no separator at all like "BBC" (in that case each character is one blank's letter, in order).
-- If the recorded answer doesn't look like letters at all (e.g. it's the literal answer text, or a number for a numeric-entry question), match it by meaning/value instead.
-- Only if the recorded answer is genuinely missing, empty, or you truly cannot map it to any option should you fall back to determining the correct answer yourself.
+For each blank with visible lettered answer choices, transcribe the options in the exact order they appear on screen (first option = A, second = B, and so on) — this order is required for matching against the recorded answer afterward, so do not reorder or omit any.
 
 Also determine "multiSelect": true if this is a checkbox-style "select all that apply" / "indicate all such..." question where the student can check any number of options (not a fixed count), false otherwise (standard single-answer multiple choice, or Sentence Equivalence's fixed pair).
 
-If this is a Quant "numeric entry" question — the student types a number or fraction into a box, with NO listed answer choices at all — do not invent options. Instead return that blank as {"label": "", "options": [], "correctIndices": [], "multiSelect": false, "numericAnswer": "the correct value exactly as it should be entered, e.g. \"22\" or \"3/4\""}, using the student's recorded correct answer above as the value if it looks valid.
+If this is a Quant "numeric entry" question — the student types a number or fraction into a box, with NO listed answer choices at all — do not invent options; return that blank as {"label": "", "options": [], "multiSelect": false}.
 
-Respond with ONLY this JSON — no markdown fences, no preamble or explanation before or after it:
-{"blanks": [{"label": "", "options": ["choice 1", "choice 2", "..."], "correctIndices": [0], "multiSelect": false}]}`;
+Respond with ONLY this JSON — no markdown fences, no preamble or explanation before or after it, and no "correctIndices" or answer-correctness field of any kind:
+{"blanks": [{"label": "", "options": ["choice 1", "choice 2", "..."], "multiSelect": false}]}`;
 
     let content = promptText;
     if (image) {
@@ -55,26 +110,37 @@ Respond with ONLY this JSON — no markdown fences, no preamble or explanation b
       return NextResponse.json({ error: `Could not extract answer choices (got: "${raw.trim().slice(0, 140)}")` }, { status: 502 });
     }
     const blanks = parsed.blanks
-      .filter((b) => b && (
-        (Array.isArray(b.options) && b.options.length >= 2)
-        || (typeof b.numericAnswer === "string" && b.numericAnswer.trim())
-      ))
+      .filter((b) => b && Array.isArray(b.options))
       .map((b) => {
-        const isNumeric = !(Array.isArray(b.options) && b.options.length >= 2);
-        return isNumeric
-          ? { label: typeof b.label === "string" ? b.label : "", options: [], correctIndices: [], multiSelect: false, numericAnswer: b.numericAnswer.trim(), _v: EXTRACTION_VERSION }
-          : {
-              label: typeof b.label === "string" ? b.label : "",
-              options: b.options.map(String),
-              correctIndices: Array.isArray(b.correctIndices) ? b.correctIndices.filter((i) => Number.isInteger(i)) : [],
-              multiSelect: b.multiSelect === true,
-              numericAnswer: null,
-              _v: EXTRACTION_VERSION,
-            };
-      });
+        const isNumeric = b.options.length < 2;
+        if (isNumeric) {
+          const numericAnswer = (entry.correctAnswer || "").trim();
+          if (!numericAnswer) return null;
+          return { label: typeof b.label === "string" ? b.label : "", options: [], correctIndices: [], multiSelect: false, numericAnswer, _v: EXTRACTION_VERSION };
+        }
+        return {
+          label: typeof b.label === "string" ? b.label : "",
+          options: b.options.map(String),
+          correctIndices: [],
+          multiSelect: b.multiSelect === true,
+          numericAnswer: null,
+          _v: EXTRACTION_VERSION,
+        };
+      })
+      .filter(Boolean);
     if (blanks.length === 0) {
       return NextResponse.json({ error: "Options list came back empty" }, { status: 502 });
     }
+
+    // Fill in correctIndices deterministically from the recorded answer —
+    // a single recorded string covers every lettered blank in order, so
+    // this runs once across all of them, not per-blank.
+    const letteredIdxs = blanks.map((b, i) => (b.options.length >= 2 ? i : -1)).filter((i) => i >= 0);
+    if (letteredIdxs.length > 0) {
+      const resolved = resolveCorrectIndices(entry.correctAnswer, letteredIdxs.map((i) => blanks[i].options));
+      letteredIdxs.forEach((bi, k) => { blanks[bi].correctIndices = resolved[k]; });
+    }
+
     return NextResponse.json({ blanks });
   } catch (e) {
     return NextResponse.json({ error: e.message || "unknown error" }, { status: 500 });
