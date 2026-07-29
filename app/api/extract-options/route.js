@@ -19,6 +19,15 @@ function matchTextIndex(raw, options) {
   return idx;
 }
 
+// Splits a recorded answer like "B, D", "B and D", "A B C", or "B & D" into
+// its individual letter tokens. Splitting (rather than a blind global
+// /[A-Za-z]/g match) matters because the connector word "and" itself
+// contains letters — a naive match would wrongly pull "a", "n", "d" out of
+// "B and D" as if they were extra answer letters.
+function splitLetterTokens(str) {
+  return str.split(/\s*,\s*|\s+and\s+|\s*&\s*|\s+/i).map((t) => t.trim()).filter(Boolean);
+}
+
 // Deterministically resolves which option(s) are correct from the
 // student's own recorded answer — no AI judgment involved. The recorded
 // answer is already ground truth; it's never re-derived or "rechecked",
@@ -29,9 +38,15 @@ function resolveCorrectIndices(rawAnswer, blanksOptions) {
   if (!trimmed) return blanksOptions.map(() => []);
 
   if (numBlanks > 1) {
-    const letters = trimmed.match(/[A-Za-z]/g);
-    if (letters && letters.length === numBlanks) {
-      const indices = letters.map((L, i) => {
+    // One letter per blank, however delimited ("B, C", "B C", "B and C"),
+    // or a bare run with no separator at all ("BC") where each character
+    // is one blank's letter, in order.
+    let tokens = splitLetterTokens(trimmed);
+    if (tokens.length !== numBlanks || !tokens.every((t) => /^[A-Za-z]$/.test(t))) {
+      tokens = /^[A-Za-z]+$/.test(trimmed) && trimmed.length === numBlanks ? trimmed.split("") : null;
+    }
+    if (tokens) {
+      const indices = tokens.map((L, i) => {
         const idx = letterIndex(L);
         return idx >= 0 && idx < blanksOptions[i].length ? idx : -1;
       });
@@ -43,13 +58,11 @@ function resolveCorrectIndices(rawAnswer, blanksOptions) {
   }
 
   const options = blanksOptions[0];
-  // One or more comma/and-separated single letters (Sentence Equivalence,
-  // or a multi-select answer like "B, D"), or a bare run like "BD"/"C".
-  const listMatch = trimmed.match(/^[A-Za-z](?:\s*(?:,|and|&)\s*[A-Za-z])*$/i);
-  const bareMatch = /^[A-Za-z]{1,2}$/.test(trimmed);
-  let letters = null;
-  if (listMatch) letters = trimmed.match(/[A-Za-z]/g);
-  else if (bareMatch) letters = trimmed.toUpperCase().split("");
+  // Any number of letters separated by commas/"and"/"&"/whitespace (single
+  // or multi-select), or a short bare run with no separator ("BD"/"C").
+  const tokens = splitLetterTokens(trimmed);
+  let letters = tokens.length > 0 && tokens.every((t) => /^[A-Za-z]$/.test(t)) ? tokens : null;
+  if (!letters && /^[A-Za-z]{1,2}$/.test(trimmed)) letters = trimmed.toUpperCase().split("");
 
   if (letters) {
     const indices = letters.map((L) => letterIndex(L)).filter((i) => i >= 0 && i < options.length);
