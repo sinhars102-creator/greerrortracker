@@ -18,6 +18,18 @@ function rcKey(q) {
   return `${q.sectionNumber}:${q.rcQuestionNumbers.join(",")}`;
 }
 
+// The model's JSON response for answerLetters occasionally comes back
+// malformed (stray quote characters, empty elements — e.g. ["'A'", "",
+// "", "'C'"]) rather than clean single letters. Sanitize once, right where
+// the extraction result enters the app, so nothing downstream (the review
+// screen's preview, or the stored correct_answer) ever sees the garbage.
+function cleanAnswerLetters(letters) {
+  if (!Array.isArray(letters)) return [];
+  return letters
+    .map((l) => String(l).replace(/[^A-Za-z]/g, "").toUpperCase())
+    .filter((l) => l.length === 1);
+}
+
 function parseNumbers(text) {
   return (text || "")
     .split(",")
@@ -158,7 +170,7 @@ export default function ImportPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Extraction failed");
-      const qs = data.questions || [];
+      const qs = (data.questions || []).map((q) => ({ ...q, answerLetters: cleanAnswerLetters(q.answerLetters) }));
       const dupes = await listImportedRefs(docHash);
       setAlreadyLogged(dupes);
       setQuestions(qs);

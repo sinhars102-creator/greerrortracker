@@ -19,13 +19,19 @@ function matchTextIndex(raw, options) {
   return idx;
 }
 
-// Splits a recorded answer like "B, D", "B and D", "A B C", or "B & D" into
-// its individual letter tokens. Splitting (rather than a blind global
-// /[A-Za-z]/g match) matters because the connector word "and" itself
-// contains letters — a naive match would wrongly pull "a", "n", "d" out of
-// "B and D" as if they were extra answer letters.
+// Splits a recorded answer like "B, D", "B and D", "A B C", "B & D", or
+// "'A',,,'C'" into its individual letter tokens. Splitting (rather than a
+// blind global /[A-Za-z]/g match) matters because the connector word "and"
+// itself contains letters — a naive match would wrongly pull "a", "n", "d"
+// out of "B and D" as if they were extra answer letters. Stray quote
+// characters are stripped per-token (extension input is raw, unvalidated
+// free text — students sometimes wrap letters in quotes) rather than
+// treated as a reason to reject the whole answer.
 function splitLetterTokens(str) {
-  return str.split(/\s*,\s*|\s+and\s+|\s*&\s*|\s+/i).map((t) => t.trim()).filter(Boolean);
+  return str
+    .split(/\s*,\s*|\s+and\s+|\s*&\s*|\s+/i)
+    .map((t) => t.trim().replace(/^['"]+|['"]+$/g, ""))
+    .filter(Boolean);
 }
 
 // Deterministically resolves which option(s) are correct from the
