@@ -8,6 +8,7 @@ import { listEntries, updateEntry, groupForSequentialPractice } from "@/lib/entr
 import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, RECENT_DAYS } from "@/lib/practiceFilters";
 
 const MISTAKE_THRESHOLD_OPTIONS = [0, 1, 2, 3, 4, 5, 7, 10];
+const VERBAL_BREAKDOWN_SUBTYPES = ["Reading Comprehension", "Text Completion", "Sentence Equivalence", "Vocabulary"];
 
 const INTERVALS = [1, 3, 7, 14, 30];
 const SECTIONS = ["Verbal", "Quant"];
@@ -40,6 +41,10 @@ function parseSourceFromParams(params) {
   if (type === "moreThanMistakes") {
     const threshold = parseInt(params.get("threshold"), 10);
     return { type, threshold: Number.isFinite(threshold) && threshold > 0 ? threshold : 2 };
+  }
+  if (type === "subtype") {
+    const subtype = params.get("subtype");
+    return subtype ? { type, subtype } : null;
   }
   return null;
 }
@@ -109,6 +114,13 @@ function ReviewPageInner() {
     () => filterMoreThanMistakes(bySection, mistakeThreshold).length,
     [bySection, mistakeThreshold]
   );
+  const verbalSubtypeBreakdown = useMemo(() => {
+    if (section !== "Verbal") return [];
+    return VERBAL_BREAKDOWN_SUBTYPES.map((subtype) => {
+      const items = bySection.filter((e) => e.subtype === subtype);
+      return { subtype, logged: items.length, errors: items.filter((e) => (e.wrongAttempts || 0) > 0).length };
+    });
+  }, [bySection, section]);
 
   const queue = useMemo(() => {
     if (!entries) return [];
@@ -198,6 +210,35 @@ function ReviewPageInner() {
               <button key={s} className={"pill" + (s === section ? " active" : "")} onClick={() => { setSection(s); setMode(null); }}>{s}</button>
             ))}
           </div>
+
+          {section === "Verbal" && (
+            <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
+              {verbalSubtypeBreakdown.map((s) => (
+                <button
+                  key={s.subtype}
+                  className="card"
+                  disabled={!s.logged}
+                  onClick={() => s.logged && startWithSource({ type: "subtype", subtype: s.subtype })}
+                  style={{
+                    padding: "16px 18px", border: "1px solid var(--border)", borderLeft: "3px solid var(--verbal)", flex: "1 1 200px",
+                    textAlign: "left", cursor: s.logged ? "pointer" : "default", opacity: s.logged ? 1 : 0.5,
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--verbal)", marginBottom: 10 }}>{s.subtype}</div>
+                  <div style={{ display: "flex", gap: 20 }}>
+                    <div>
+                      <div className="mono" style={{ fontSize: 26, fontWeight: 700 }}>{s.logged}</div>
+                      <div style={{ fontSize: 11.5, color: "var(--muted)" }}>logged</div>
+                    </div>
+                    <div>
+                      <div className="mono" style={{ fontSize: 26, fontWeight: 700, color: s.errors ? "var(--red)" : "var(--muted)" }}>{s.errors}</div>
+                      <div style={{ fontSize: 11.5, color: "var(--muted)" }}>errors</div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
 
           {mode === null && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -296,7 +337,13 @@ function ReviewPageInner() {
     <AppShell>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
         <div style={{ fontSize: 13, color: "var(--muted)" }}>{remaining.length} left{skippedIds.size > 0 ? ` · ${skippedIds.size} skipped` : ""}</div>
-        <button className="btn" style={{ fontSize: 11.5, padding: "5px 10px" }} onClick={backToSetup}>Exit session</button>
+        <button
+          className="btn"
+          onClick={backToSetup}
+          style={{ fontSize: 13, padding: "8px 16px", color: "var(--red)", borderColor: "var(--red)", fontWeight: 600 }}
+        >
+          Exit session
+        </button>
       </div>
       <QuestionCard
         key={current.id}
