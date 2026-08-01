@@ -348,7 +348,7 @@ function VocabReviewPageInner() {
         setStage("result");
       }
     } catch (e) {
-      setError("Grading failed — check your connection and try again.");
+      setError(e.message ? `Grading failed — ${e.message}` : "Grading failed — check your connection and try again.");
       setStage("quiz");
     }
   }
@@ -363,7 +363,7 @@ function VocabReviewPageInner() {
       setGrade(g);
       setStage("result");
     } catch (e) {
-      setError("Grading failed — check your connection and try again.");
+      setError(e.message ? `Grading failed — ${e.message}` : "Grading failed — check your connection and try again.");
       setStage("clarify");
     }
   }
@@ -679,6 +679,22 @@ function VocabReviewPageInner() {
                   <div style={{ ...eyebrow, marginBottom: 4 }}>Correct meaning</div>
                   <div style={{ fontSize: 14 }}>{queue[idx].m}</div>
                 </div>
+                {grade.examples && grade.examples.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ ...eyebrow, marginBottom: 6 }}>Example usage</div>
+                    <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 }}>
+                      {grade.examples.map((s, i) => (
+                        <li key={i} style={{ fontSize: 13.5, lineHeight: 1.5 }}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {grade.usageNote && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ ...eyebrow, marginBottom: 4 }}>When this word is the sharpest choice</div>
+                    <div style={{ fontSize: 13.5, lineHeight: 1.5, color: "var(--muted)" }}>{grade.usageNote}</div>
+                  </div>
+                )}
                 {progress[queue[idx].w] && progress[queue[idx].w].hook && progress[queue[idx].w].hook !== grade.hook && (
                   <div style={{ background: "rgba(232,163,61,0.12)", border: "1px solid var(--amber)", borderRadius: 5, padding: "10px 14px", marginBottom: 16 }}>
                     <div style={{ ...eyebrow, color: "var(--amber)", marginBottom: 4 }}>Your saved hook</div>
