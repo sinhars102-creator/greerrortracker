@@ -5,7 +5,9 @@ import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import QuestionCard from "@/components/QuestionCard";
 import { listEntries, updateEntry, groupForSequentialPractice } from "@/lib/entries";
-import { buildTiers, flattenTiers, resolveSource, RECENT_DAYS } from "@/lib/practiceFilters";
+import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, RECENT_DAYS } from "@/lib/practiceFilters";
+
+const MISTAKE_THRESHOLD_OPTIONS = [0, 1, 2, 3, 4, 5, 7, 10];
 
 const INTERVALS = [1, 3, 7, 14, 30];
 const SECTIONS = ["Verbal", "Quant"];
@@ -34,6 +36,10 @@ function parseSourceFromParams(params) {
   if (type === "loggedWindow" || type === "staleWindow") {
     const days = parseInt(params.get("days"), 10);
     return { type, days: Number.isFinite(days) && days > 0 ? days : RECENT_DAYS };
+  }
+  if (type === "moreThanMistakes") {
+    const threshold = parseInt(params.get("threshold"), 10);
+    return { type, threshold: Number.isFinite(threshold) && threshold > 0 ? threshold : 2 };
   }
   return null;
 }
@@ -85,6 +91,7 @@ function ReviewPageInner() {
   const [started, setStarted] = useState(initial.started);
   const [skippedIds, setSkippedIds] = useState(initial.skippedIds);
   const [answeredIds, setAnsweredIds] = useState(initial.answeredIds);
+  const [mistakeThreshold, setMistakeThreshold] = useState(2);
 
   const refresh = () => listEntries().then(setEntries);
   useEffect(() => { refresh(); }, []);
@@ -98,6 +105,10 @@ function ReviewPageInner() {
 
   const bySection = useMemo(() => (entries || []).filter((e) => e.section === section && !e.pending), [entries, section]);
   const tiers = useMemo(() => buildTiers(bySection), [bySection]);
+  const mistakeThresholdCount = useMemo(
+    () => filterMoreThanMistakes(bySection, mistakeThreshold).length,
+    [bySection, mistakeThreshold]
+  );
 
   const queue = useMemo(() => {
     if (!entries) return [];
@@ -234,6 +245,30 @@ function ReviewPageInner() {
                     </button>
                   );
                 })}
+                <div className="card" style={{ padding: 16, border: "1px solid var(--border)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10 }}>
+                    <span style={{ fontSize: 14 }}>Mistaken more than</span>
+                    <select
+                      value={mistakeThreshold}
+                      onChange={(e) => setMistakeThreshold(parseInt(e.target.value, 10))}
+                      style={{ width: "auto" }}
+                    >
+                      {MISTAKE_THRESHOLD_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <span style={{ fontSize: 14 }}>time{mistakeThreshold === 1 ? "" : "s"}</span>
+                    <span className="mono" style={{ fontSize: 18, fontWeight: 700, marginLeft: "auto", color: mistakeThresholdCount ? "var(--amber)" : "var(--muted)" }}>
+                      {mistakeThresholdCount}
+                    </span>
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    style={{ width: "100%" }}
+                    disabled={!mistakeThresholdCount}
+                    onClick={() => mistakeThresholdCount && startWithSource({ type: "moreThanMistakes", threshold: mistakeThreshold })}
+                  >
+                    Start
+                  </button>
+                </div>
               </div>
             </div>
           )}
