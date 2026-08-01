@@ -221,6 +221,27 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
     setEditBlanks((prev) => prev.map((b, idx) => (idx !== bi ? b : { ...b, options: b.options.map((o, oi) => (oi === i ? text : o)) })));
   };
 
+  // For when the AI's screenshot transcription drops or invents an option
+  // (e.g. skips one choice entirely, shifting every letter after it) —
+  // lets you manually restore the real option count rather than being
+  // stuck with whatever the model happened to transcribe.
+  const addOption = (bi) => {
+    setEditBlanks((prev) => prev.map((b, idx) => (idx !== bi ? b : { ...b, options: [...b.options, ""] })));
+  };
+
+  const removeOption = (bi, i) => {
+    setEditBlanks((prev) => prev.map((b, idx) => {
+      if (idx !== bi) return b;
+      if (b.options.length <= 2) return b;
+      const cur = b.correctIndices || [];
+      return {
+        ...b,
+        options: b.options.filter((_, oi) => oi !== i),
+        correctIndices: cur.filter((x) => x !== i).map((x) => (x > i ? x - 1 : x)),
+      };
+    }));
+  };
+
   const updateNumericAnswer = (bi, text) => {
     setEditBlanks((prev) => prev.map((b, idx) => (idx !== bi ? b : { ...b, numericAnswer: text })));
   };
@@ -378,9 +399,21 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
                       >
                         {isCorrect ? "✓ Correct" : "Mark correct"}
                       </button>
+                      <button
+                        onClick={() => removeOption(bi, i)}
+                        disabled={b.options.length <= 2}
+                        className="btn"
+                        title="Remove this option"
+                        style={{ padding: "7px 10px", fontSize: 11.5, color: "var(--red)" }}
+                      >
+                        ✕
+                      </button>
                     </div>
                   );
                 })}
+                <button onClick={() => addOption(bi)} className="btn" style={{ padding: "6px 10px", fontSize: 11.5, marginTop: 2 }}>
+                  + Add missing option
+                </button>
               </>
             )}
           </div>

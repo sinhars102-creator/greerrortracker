@@ -13,7 +13,10 @@ function normalizeText(s) {
 
 function matchTextIndex(raw, options) {
   const target = normalizeText(raw);
-  if (!target) return -1;
+  // A 1-2 character target is too short to mean anything as literal answer
+  // text and will spuriously substring-match almost any real sentence —
+  // only exact equality is trustworthy at that length.
+  if (!target || target.length < 3) return options.findIndex((o) => normalizeText(o) === target);
   let idx = options.findIndex((o) => normalizeText(o) === target);
   if (idx === -1) idx = options.findIndex((o) => normalizeText(o).includes(target) || target.includes(normalizeText(o)));
   return idx;
@@ -70,9 +73,17 @@ function resolveCorrectIndices(rawAnswer, blanksOptions) {
   let letters = tokens.length > 0 && tokens.every((t) => /^[A-Za-z]$/.test(t)) ? tokens : null;
   if (!letters && /^[A-Za-z]{1,2}$/.test(trimmed)) letters = trimmed.toUpperCase().split("");
 
+  // If the recorded answer parsed as letter token(s) at all, it was meant
+  // as letters — resolve it as letters or not at all. Falling through to
+  // matchTextIndex below for a bare letter that's merely out of range
+  // (e.g. recorded "E" but the transcription only came back with 4
+  // options, so E has no index 4 to land on) is what caused a real bug:
+  // a lone character like "e" trivially substring-matches almost any real
+  // sentence, so it silently "matched" whatever option happened to
+  // contain that letter rather than reporting the mapping as unresolved.
   if (letters) {
     const indices = letters.map((L) => letterIndex(L)).filter((i) => i >= 0 && i < options.length);
-    if (indices.length === letters.length) return [indices];
+    return [indices.length === letters.length ? indices : []];
   }
 
   const idx = matchTextIndex(trimmed, options);
@@ -106,7 +117,7 @@ ${(entry.passage || "").trim() ? `Passage:\n${entry.passage.slice(0, 4000)}\n\n`
 
 If this question has MULTIPLE separate blanks, each with its own list of options, return one entry in "blanks" per blank, each with its own "options" array and a short "label" (e.g. "Blank (i)"). Otherwise return exactly one entry with "label" set to an empty string.
 
-For each blank with visible lettered answer choices, transcribe the options in the exact order they appear on screen (first option = A, second = B, and so on) — this order is required for matching against the recorded answer afterward, so do not reorder or omit any.
+For each blank with visible lettered answer choices, transcribe the options in the exact order they appear on screen (first option = A, second = B, and so on). Standard GRE multiple-choice has 5 lettered options (A-E); Sentence Equivalence has 6 (A-F). Before responding, COUNT the options you found against how many lettered choices are actually visible in the image — if your count is short, you skipped one; go back and find it rather than returning an incomplete list. This order is required for matching against the recorded answer afterward, so do not reorder, merge, or omit any, even if two options look similar.
 
 Also determine "multiSelect": true if this is a checkbox-style "select all that apply" / "indicate all such..." question where the student can check any number of options (not a fixed count), false otherwise (standard single-answer multiple choice, or Sentence Equivalence's fixed pair).
 
@@ -149,6 +160,22 @@ Respond with ONLY this JSON — no markdown fences, no preamble or explanation b
       .filter(Boolean);
     if (blanks.length === 0) {
       return NextResponse.json({ error: "Options list came back empty" }, { status: 502 });
+    }
+
+    // When there's no image and questionText never actually included the
+    // real answer choices (common for entries logged by hand without a
+    // screenshot — the manual log form has no field for option text), the
+    // model has nothing real to transcribe and tends to fabricate
+    // placeholder text like "A"/"B"/"C" — literally just each option's own
+    // letter, or "choice 1"/"choice 2". Catch that and fail clearly rather
+    // than silently handing back garbage that looks like real options.
+    const looksFabricated = (options) => options.every((o, i) => {
+      const t = o.trim().toLowerCase();
+      return t === String.fromCharCode(97 + i) || /^choice\s*\d+$/.test(t) || t === "";
+    });
+    const letteredBlanks = blanks.filter((b) => b.options.length >= 2);
+    if (!hasImage && letteredBlanks.length > 0 && letteredBlanks.every((b) => looksFabricated(b.options))) {
+      return NextResponse.json({ error: "This entry has no screenshot and the question text doesn't include the actual answer choices, so there's nothing real to transcribe — edit it manually to add the real options, or delete and re-log it with a screenshot." }, { status: 422 });
     }
 
     // Fill in correctIndices deterministically from the recorded answer —
