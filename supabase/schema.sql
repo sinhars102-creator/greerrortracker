@@ -239,6 +239,25 @@ create policy "Users manage their own pdf scans"
   on pdf_scans for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ============================================================
+-- TEST SCORES (app/score-chart) — logged full-length practice-test
+-- results, plotted as a line chart over time alongside the score-
+-- conversion lookup table.
+-- ============================================================
+create table if not exists test_scores (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  test_date date not null,
+  quant_score int not null check (quant_score between 130 and 170),
+  verbal_score int not null check (verbal_score between 130 and 170),
+  notes text not null default '',
+  created_at timestamptz not null default now()
+);
+
+alter table test_scores enable row level security;
+create policy "Users manage their own test scores"
+  on test_scores for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ============================================================
 -- updated_at auto-touch trigger for entries
 -- ============================================================
 create or replace function touch_updated_at()

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Power, Play, BookOpen, Puzzle, ChevronDown, FileUp } from "lucide-react";
+import { Plus, Power, LineChart, BookOpen, Puzzle, ChevronDown, FileUp } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getAiProvider, setAiProvider } from "@/lib/settings";
 
@@ -14,7 +14,7 @@ const PROVIDERS = [
   { value: "groq", label: "Groq" },
 ];
 
-// Flat tabs — Practice, Vocab Review, Log Mistake, and Import PDF are
+// Flat tabs — Score Chart, Vocab Review, Log Mistake, and Import PDF are
 // deliberately excluded here since they already have dedicated buttons in
 // the header.
 const TABS = [
@@ -181,9 +181,9 @@ export default function AppShell({ children }) {
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             {provider && <ProviderDropdown provider={provider} providers={PROVIDERS} onSelect={switchProvider} />}
-            <Link href="/practice" className="btn" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
-              <Play size={15} strokeWidth={2.5} />
-              Practice
+            <Link href="/score-chart" className="btn" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
+              <LineChart size={15} strokeWidth={2.5} />
+              Score Chart
             </Link>
             <Link href="/vocab" className="btn" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
               <BookOpen size={15} strokeWidth={2.5} />
