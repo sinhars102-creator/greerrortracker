@@ -5,9 +5,10 @@ import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import QuestionCard from "@/components/QuestionCard";
 import { listEntries, updateEntry, groupForSequentialPractice } from "@/lib/entries";
-import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, RECENT_DAYS } from "@/lib/practiceFilters";
+import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, filterReviewedWithinDays, RECENT_DAYS } from "@/lib/practiceFilters";
 
 const MISTAKE_THRESHOLD_OPTIONS = [0, 1, 2, 3, 4, 5, 7, 10];
+const REVIEWED_WINDOW_OPTIONS = [1, 3, 5, 7, 14];
 const VERBAL_BREAKDOWN_SUBTYPES = ["Reading Comprehension", "Text Completion", "Sentence Equivalence", "Vocabulary"];
 
 const INTERVALS = [1, 3, 7, 14, 30];
@@ -32,9 +33,10 @@ function parseSourceFromParams(params) {
   if (!type || type === "all") return type === "all" ? { type: "all" } : null;
   if (type === "tier") {
     const tier = params.get("tier");
-    return TIER_INFO.some((t) => t.key === tier) ? { type: "tier", tier } : null;
+    if (!TIER_INFO.some((t) => t.key === tier)) return null;
+    return { type: "tier", tier, unattemptedOnly: params.get("unattempted") === "1" };
   }
-  if (type === "loggedWindow" || type === "staleWindow") {
+  if (type === "loggedWindow" || type === "staleWindow" || type === "reviewedWindow") {
     const days = parseInt(params.get("days"), 10);
     return { type, days: Number.isFinite(days) && days > 0 ? days : RECENT_DAYS };
   }
@@ -97,6 +99,7 @@ function ReviewPageInner() {
   const [skippedIds, setSkippedIds] = useState(initial.skippedIds);
   const [answeredIds, setAnsweredIds] = useState(initial.answeredIds);
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
+  const [reviewedWindowDays, setReviewedWindowDays] = useState(3);
 
   const refresh = () => listEntries().then(setEntries);
   useEffect(() => { refresh(); }, []);
@@ -110,9 +113,22 @@ function ReviewPageInner() {
 
   const bySection = useMemo(() => (entries || []).filter((e) => e.section === section && !e.pending), [entries, section]);
   const tiers = useMemo(() => buildTiers(bySection), [bySection]);
+  const tierAttemptStats = useMemo(() => {
+    const stats = {};
+    for (const t of TIER_INFO) {
+      const items = tiers[t.key];
+      const notAttempted = items.filter((e) => !(e.totalAttempts > 0)).length;
+      stats[t.key] = { total: items.length, notAttempted, attempted: items.length - notAttempted };
+    }
+    return stats;
+  }, [tiers]);
   const mistakeThresholdCount = useMemo(
     () => filterMoreThanMistakes(bySection, mistakeThreshold).length,
     [bySection, mistakeThreshold]
+  );
+  const reviewedWindowCount = useMemo(
+    () => filterReviewedWithinDays(bySection, reviewedWindowDays).length,
+    [bySection, reviewedWindowDays]
   );
   const verbalSubtypeBreakdown = useMemo(() => {
     if (section !== "Verbal") return [];
@@ -268,22 +284,38 @@ function ReviewPageInner() {
               <button className="btn" onClick={() => setMode(null)} style={{ marginBottom: 14, fontSize: 12 }}>← Back</button>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {TIER_INFO.map((t) => {
-                  const count = tiers[t.key].length;
+                  const stat = tierAttemptStats[t.key];
+                  const count = stat.total;
                   return (
-                    <button
-                      key={t.key}
-                      className="card"
-                      style={{
-                        padding: 16, textAlign: "left", border: "1px solid var(--border)", width: "100%",
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                        cursor: count ? "pointer" : "default", opacity: count ? 1 : 0.5,
-                      }}
-                      onClick={() => count && startWithSource({ type: "tier", tier: t.key })}
-                      disabled={!count}
-                    >
-                      <span style={{ fontSize: 14 }}>{t.label}</span>
-                      <span className="mono" style={{ fontSize: 18, fontWeight: 700, color: count ? "var(--amber)" : "var(--muted)" }}>{count}</span>
-                    </button>
+                    <div key={t.key} className="card" style={{ padding: 16, border: "1px solid var(--border)", opacity: count ? 1 : 0.5 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontSize: 14 }}>{t.label}</span>
+                        <span className="mono" style={{ fontSize: 18, fontWeight: 700, color: count ? "var(--amber)" : "var(--muted)" }}>{count}</span>
+                      </div>
+                      {count > 0 && (
+                        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>
+                          {stat.attempted} attempted · {stat.notAttempted} not attempted
+                        </div>
+                      )}
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          className="btn"
+                          style={{ fontSize: 12, padding: "6px 10px" }}
+                          disabled={!stat.notAttempted}
+                          onClick={() => startWithSource({ type: "tier", tier: t.key, unattemptedOnly: true })}
+                        >
+                          Practice not attempted ({stat.notAttempted})
+                        </button>
+                        <button
+                          className="btn btn-primary"
+                          style={{ fontSize: 12, padding: "6px 10px" }}
+                          disabled={!count}
+                          onClick={() => startWithSource({ type: "tier", tier: t.key })}
+                        >
+                          Practice all ({count})
+                        </button>
+                      </div>
+                    </div>
                   );
                 })}
                 <div className="card" style={{ padding: 16, border: "1px solid var(--border)" }}>
@@ -306,6 +338,30 @@ function ReviewPageInner() {
                     style={{ width: "100%" }}
                     disabled={!mistakeThresholdCount}
                     onClick={() => mistakeThresholdCount && startWithSource({ type: "moreThanMistakes", threshold: mistakeThreshold })}
+                  >
+                    Start
+                  </button>
+                </div>
+                <div className="card" style={{ padding: 16, border: "1px solid var(--border)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10 }}>
+                    <span style={{ fontSize: 14 }}>Practiced in the last</span>
+                    <select
+                      value={reviewedWindowDays}
+                      onChange={(e) => setReviewedWindowDays(parseInt(e.target.value, 10))}
+                      style={{ width: "auto" }}
+                    >
+                      {REVIEWED_WINDOW_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <span style={{ fontSize: 14 }}>day{reviewedWindowDays === 1 ? "" : "s"}</span>
+                    <span className="mono" style={{ fontSize: 18, fontWeight: 700, marginLeft: "auto", color: reviewedWindowCount ? "var(--amber)" : "var(--muted)" }}>
+                      {reviewedWindowCount}
+                    </span>
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    style={{ width: "100%" }}
+                    disabled={!reviewedWindowCount}
+                    onClick={() => reviewedWindowCount && startWithSource({ type: "reviewedWindow", days: reviewedWindowDays })}
                   >
                     Start
                   </button>
