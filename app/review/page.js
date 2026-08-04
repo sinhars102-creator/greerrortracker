@@ -1,14 +1,13 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import QuestionCard from "@/components/QuestionCard";
 import { listEntries, updateEntry, groupForSequentialPractice } from "@/lib/entries";
-import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, filterReviewedWithinDays, RECENT_DAYS } from "@/lib/practiceFilters";
+import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, filterLoggedSinceDate, RECENT_DAYS } from "@/lib/practiceFilters";
 
 const MISTAKE_THRESHOLD_OPTIONS = [0, 1, 2, 3, 4, 5, 7, 10];
-const REVIEWED_WINDOW_OPTIONS = [1, 3, 5, 7, 14];
 const VERBAL_BREAKDOWN_SUBTYPES = ["Reading Comprehension", "Text Completion", "Sentence Equivalence", "Vocabulary"];
 
 const INTERVALS = [1, 3, 7, 14, 30];
@@ -36,13 +35,17 @@ function parseSourceFromParams(params) {
     if (!TIER_INFO.some((t) => t.key === tier)) return null;
     return { type: "tier", tier, unattemptedOnly: params.get("unattempted") === "1" };
   }
-  if (type === "loggedWindow" || type === "staleWindow" || type === "reviewedWindow") {
+  if (type === "loggedWindow" || type === "staleWindow") {
     const days = parseInt(params.get("days"), 10);
     return { type, days: Number.isFinite(days) && days > 0 ? days : RECENT_DAYS };
   }
   if (type === "moreThanMistakes") {
     const threshold = parseInt(params.get("threshold"), 10);
     return { type, threshold: Number.isFinite(threshold) && threshold > 0 ? threshold : 2 };
+  }
+  if (type === "loggedSince") {
+    const date = params.get("date");
+    return /^\d{4}-\d{2}-\d{2}$/.test(date || "") ? { type, date } : null;
   }
   if (type === "subtype") {
     const subtype = params.get("subtype");
@@ -99,7 +102,8 @@ function ReviewPageInner() {
   const [skippedIds, setSkippedIds] = useState(initial.skippedIds);
   const [answeredIds, setAnsweredIds] = useState(initial.answeredIds);
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
-  const [reviewedWindowDays, setReviewedWindowDays] = useState(3);
+  const [loggedSinceDate, setLoggedSinceDate] = useState(null);
+  const dateInputRef = useRef(null);
 
   const refresh = () => listEntries().then(setEntries);
   useEffect(() => { refresh(); }, []);
@@ -112,7 +116,16 @@ function ReviewPageInner() {
   }, [section, source, started, answeredIds, skippedIds]);
 
   const bySection = useMemo(() => (entries || []).filter((e) => e.section === section && !e.pending), [entries, section]);
-  const tiers = useMemo(() => buildTiers(bySection), [bySection]);
+  // When a "logged since" date is picked, every number in the tier-wise
+  // section (tiers, subtype breakdown, mistake-threshold count) scopes down
+  // to just entries logged on/after it — same convention as Dashboard's
+  // Window selector scoping its stats. Unset (null) means no scoping, the
+  // original full pool.
+  const scopedBySection = useMemo(
+    () => (loggedSinceDate ? filterLoggedSinceDate(bySection, loggedSinceDate) : bySection),
+    [bySection, loggedSinceDate]
+  );
+  const tiers = useMemo(() => buildTiers(scopedBySection), [scopedBySection]);
   const tierAttemptStats = useMemo(() => {
     const stats = {};
     for (const t of TIER_INFO) {
@@ -123,28 +136,28 @@ function ReviewPageInner() {
     return stats;
   }, [tiers]);
   const mistakeThresholdCount = useMemo(
-    () => filterMoreThanMistakes(bySection, mistakeThreshold).length,
-    [bySection, mistakeThreshold]
+    () => filterMoreThanMistakes(scopedBySection, mistakeThreshold).length,
+    [scopedBySection, mistakeThreshold]
   );
-  const reviewedWindowCount = useMemo(
-    () => filterReviewedWithinDays(bySection, reviewedWindowDays).length,
-    [bySection, reviewedWindowDays]
-  );
+  const loggedSinceCount = scopedBySection.length;
   const verbalSubtypeBreakdown = useMemo(() => {
     if (section !== "Verbal") return [];
     return VERBAL_BREAKDOWN_SUBTYPES.map((subtype) => {
-      const items = bySection.filter((e) => e.subtype === subtype);
+      const items = scopedBySection.filter((e) => e.subtype === subtype);
       return { subtype, logged: items.length, errors: items.filter((e) => (e.wrongAttempts || 0) > 0).length };
     });
-  }, [bySection, section]);
+  }, [scopedBySection, section]);
 
   const queue = useMemo(() => {
     if (!entries) return [];
-    const ordered = resolveSource(bySection, source);
+    // scopedBySection (not the raw bySection) so what actually gets
+    // practiced matches whatever the setup screen displayed as the count —
+    // if "logged since" narrowed the pool, starting a session honors that.
+    const ordered = resolveSource(scopedBySection, source);
     // Keep Reading Comprehension batches adjacent and in sequence, rather
     // than scattered wherever they land in the tiered/filtered order.
     return groupForSequentialPractice(ordered).flat();
-  }, [entries, bySection, source]);
+  }, [entries, scopedBySection, source]);
 
   // Answering a question doesn't remove it from the underlying pool (there's
   // no due-date gating anymore to naturally push it out), so track what's
@@ -221,10 +234,38 @@ function ReviewPageInner() {
     return (
       <AppShell>
         <div className="card" style={{ padding: 22 }}>
-          <div className="pills" style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-            {SECTIONS.map((s) => (
-              <button key={s} className={"pill" + (s === section ? " active" : "")} onClick={() => { setSection(s); setMode(null); }}>{s}</button>
-            ))}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+            <div className="pills" style={{ display: "flex", gap: 8 }}>
+              {SECTIONS.map((s) => (
+                <button key={s} className={"pill" + (s === section ? " active" : "")} onClick={() => { setSection(s); setMode(null); }}>{s}</button>
+              ))}
+            </div>
+            <div
+              onClick={() => { try { dateInputRef.current?.showPicker?.(); } catch { /* unsupported browser — native click still works */ } }}
+              style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--muted)", cursor: "pointer" }}
+            >
+              <span>Logged since</span>
+              <input
+                ref={dateInputRef}
+                type="date"
+                value={loggedSinceDate || ""}
+                max={todayISO()}
+                onChange={(e) => setLoggedSinceDate(e.target.value || null)}
+                onClick={(e) => e.stopPropagation()}
+                style={{ width: "auto", cursor: "pointer" }}
+              />
+              <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: loggedSinceDate ? "var(--amber)" : "var(--muted)" }}>
+                {loggedSinceCount}
+              </span>
+              <button
+                className="btn"
+                style={{ fontSize: 11.5, padding: "5px 10px" }}
+                disabled={!loggedSinceDate}
+                onClick={(e) => { e.stopPropagation(); loggedSinceDate && startWithSource({ type: "loggedSince", date: loggedSinceDate }); }}
+              >
+                Start
+              </button>
+            </div>
           </div>
 
           {section === "Verbal" && (
@@ -338,30 +379,6 @@ function ReviewPageInner() {
                     style={{ width: "100%" }}
                     disabled={!mistakeThresholdCount}
                     onClick={() => mistakeThresholdCount && startWithSource({ type: "moreThanMistakes", threshold: mistakeThreshold })}
-                  >
-                    Start
-                  </button>
-                </div>
-                <div className="card" style={{ padding: 16, border: "1px solid var(--border)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10 }}>
-                    <span style={{ fontSize: 14 }}>Practiced in the last</span>
-                    <select
-                      value={reviewedWindowDays}
-                      onChange={(e) => setReviewedWindowDays(parseInt(e.target.value, 10))}
-                      style={{ width: "auto" }}
-                    >
-                      {REVIEWED_WINDOW_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                    <span style={{ fontSize: 14 }}>day{reviewedWindowDays === 1 ? "" : "s"}</span>
-                    <span className="mono" style={{ fontSize: 18, fontWeight: 700, marginLeft: "auto", color: reviewedWindowCount ? "var(--amber)" : "var(--muted)" }}>
-                      {reviewedWindowCount}
-                    </span>
-                  </div>
-                  <button
-                    className="btn btn-primary"
-                    style={{ width: "100%" }}
-                    disabled={!reviewedWindowCount}
-                    onClick={() => reviewedWindowCount && startWithSource({ type: "reviewedWindow", days: reviewedWindowDays })}
                   >
                     Start
                   </button>
