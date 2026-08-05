@@ -76,10 +76,45 @@ function clearSession(section) {
   try { localStorage.removeItem(sessionKey(section)); } catch {}
 }
 
+// Without a ?section= URL param (a plain refresh, or just navigating to
+// /review from a nav link), the section always used to default to
+// "Verbal" before ever checking localStorage — so a Quant session in
+// progress looked up the wrong storage key and appeared lost even though
+// it was sitting there correctly. Remembering the last-used section fixes
+// resuming any in-progress session regardless of which section it's in.
+function lastSectionKey() { return "review_last_section"; }
+function loadLastSection() {
+  if (typeof window === "undefined") return null;
+  try {
+    const v = localStorage.getItem(lastSectionKey());
+    return SECTIONS.includes(v) ? v : null;
+  } catch { return null; }
+}
+function saveLastSection(section) {
+  if (typeof window === "undefined") return;
+  try { localStorage.setItem(lastSectionKey(), section); } catch {}
+}
+
+// The "Logged since" date picker lives on the setup screen, before any
+// session has started — remembered separately so picking a date and then
+// refreshing (without yet clicking Start) doesn't lose the pick.
+function loggedSinceKey(section) { return `review_logged_since_${section}`; }
+function loadLoggedSinceDate(section) {
+  if (typeof window === "undefined") return null;
+  try { return localStorage.getItem(loggedSinceKey(section)) || null; } catch { return null; }
+}
+function saveLoggedSinceDate(section, date) {
+  if (typeof window === "undefined") return;
+  try {
+    if (date) localStorage.setItem(loggedSinceKey(section), date);
+    else localStorage.removeItem(loggedSinceKey(section));
+  } catch { /* storage full/unavailable — pick just won't be remembered */ }
+}
+
 // A Dashboard deep link always wins and starts a fresh session; otherwise
 // resume whatever was saved for this section, if anything.
 function computeInitialState(searchParams) {
-  const section = SECTIONS.includes(searchParams.get("section")) ? searchParams.get("section") : "Verbal";
+  const section = SECTIONS.includes(searchParams.get("section")) ? searchParams.get("section") : (loadLastSection() || "Verbal");
   const deepLinkSource = parseSourceFromParams(searchParams);
   const saved = deepLinkSource ? null : loadSavedSession(section);
   return {
@@ -102,11 +137,21 @@ function ReviewPageInner() {
   const [skippedIds, setSkippedIds] = useState(initial.skippedIds);
   const [answeredIds, setAnsweredIds] = useState(initial.answeredIds);
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
-  const [loggedSinceDate, setLoggedSinceDate] = useState(null);
+  const [loggedSinceDate, setLoggedSinceDate] = useState(() => loadLoggedSinceDate(initial.section));
   const dateInputRef = useRef(null);
 
   const refresh = () => listEntries().then(setEntries);
   useEffect(() => { refresh(); }, []);
+
+  useEffect(() => { saveLastSection(section); }, [section]);
+  useEffect(() => { saveLoggedSinceDate(section, loggedSinceDate); }, [section, loggedSinceDate]);
+
+  // Each section remembers its own "logged since" pick — switching sections
+  // should load that section's own saved date, not carry over the other's.
+  const switchSection = (s) => {
+    setSection(s);
+    setLoggedSinceDate(loadLoggedSinceDate(s));
+  };
 
   // Persist progress as it happens, so an exit mid-session (tab close,
   // reload, navigating away) can pick back up where it left off.
@@ -222,7 +267,7 @@ function ReviewPageInner() {
           <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>Log a few mistakes first, or switch section.</div>
           <div className="pills" style={{ display: "inline-flex", gap: 8 }}>
             {SECTIONS.map((s) => (
-              <button key={s} className={"pill" + (s === section ? " active" : "")} onClick={() => setSection(s)}>{s}</button>
+              <button key={s} className={"pill" + (s === section ? " active" : "")} onClick={() => switchSection(s)}>{s}</button>
             ))}
           </div>
         </div>
@@ -237,7 +282,7 @@ function ReviewPageInner() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
             <div className="pills" style={{ display: "flex", gap: 8 }}>
               {SECTIONS.map((s) => (
-                <button key={s} className={"pill" + (s === section ? " active" : "")} onClick={() => { setSection(s); setMode(null); }}>{s}</button>
+                <button key={s} className={"pill" + (s === section ? " active" : "")} onClick={() => { switchSection(s); setMode(null); }}>{s}</button>
               ))}
             </div>
             <div
