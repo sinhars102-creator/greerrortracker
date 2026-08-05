@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Power, LineChart, BookOpen, Puzzle, ChevronDown, FileUp } from "lucide-react";
+import { Plus, Power, LineChart, BookOpen, Puzzle, ChevronDown, FileUp, Calculator as CalculatorIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getAiProvider, setAiProvider } from "@/lib/settings";
+import Calculator from "@/components/Calculator";
 
 const PROVIDERS = [
   { value: "anthropic", label: "Claude" },
@@ -145,6 +146,98 @@ function ProviderDropdown({ provider, providers, onSelect }) {
   );
 }
 
+function CalculatorDropdown() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: "relative" }} title="Calculator">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="btn btn-primary"
+        aria-label="Calculator"
+        style={{ padding: 9, display: "flex", alignItems: "center", justifyContent: "center" }}
+      >
+        <CalculatorIcon size={17} strokeWidth={2.5} />
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 8, zIndex: 20 }}>
+          <Calculator />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// "Log Mistake" is the primary CTA; "Import PDF" is a less-common alternate
+// way to add entries, so it lives behind a small split-button dropdown
+// arrow attached to the main button instead of taking its own header slot.
+function LogMistakeSplitButton() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: "relative", display: "flex" }}>
+      <Link
+        href="/log"
+        className="btn btn-primary"
+        style={{
+          fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6,
+          borderTopRightRadius: 0, borderBottomRightRadius: 0,
+        }}
+      >
+        <Plus size={15} strokeWidth={2.5} />
+        Log Mistake
+      </Link>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="btn btn-primary"
+        aria-label="More ways to add entries"
+        style={{
+          padding: "8px 8px", display: "flex", alignItems: "center",
+          borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: "1px solid rgba(0,0,0,0.2)",
+        }}
+      >
+        <ChevronDown size={13} />
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "100%", right: 0, marginTop: 6, background: "var(--panel)",
+          border: "1px solid var(--border)", borderRadius: 6, minWidth: 160, zIndex: 20, padding: 4,
+        }}>
+          <Link
+            href="/import"
+            onClick={() => setOpen(false)}
+            style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", fontSize: 13,
+              textDecoration: "none", borderRadius: 4, color: "var(--muted)",
+            }}
+          >
+            <FileUp size={14} />
+            Import PDF
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AppShell({ children }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -189,14 +282,7 @@ export default function AppShell({ children }) {
               <BookOpen size={15} strokeWidth={2.5} />
               Vocab Review
             </Link>
-            <Link href="/import" className="btn" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
-              <FileUp size={15} strokeWidth={2.5} />
-              Import PDF
-            </Link>
-            <Link href="/log" className="btn btn-primary" style={{ fontSize: 12, padding: "8px 14px", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
-              <Plus size={15} strokeWidth={2.5} />
-              Log Mistake
-            </Link>
+            <LogMistakeSplitButton />
             <Link
               href="/extension"
               className="btn"
@@ -215,6 +301,7 @@ export default function AppShell({ children }) {
             >
               <Power size={15} />
             </button>
+            <CalculatorDropdown />
           </div>
         </div>
 
