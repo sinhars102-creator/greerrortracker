@@ -28,6 +28,7 @@ create table if not exists entries (
   last_reviewed date,
   next_review date not null default current_date,
   mastered boolean not null default false,
+  starred boolean not null default false, -- flagged as important during Review, for a dedicated practice tier
   total_attempts int not null default 0,
   wrong_attempts int not null default 0,
   pending boolean not null default false,
@@ -47,6 +48,8 @@ alter table entries add column if not exists rc_group_order int;
 -- for installs that already ran the create table above before PDF import existed
 alter table entries add column if not exists import_source text;
 alter table entries add column if not exists import_ref text;
+-- for installs that already ran the create table above before starring existed
+alter table entries add column if not exists starred boolean not null default false;
 
 create index if not exists entries_user_id_idx on entries(user_id);
 create index if not exists entries_next_review_idx on entries(user_id, next_review) where not mastered;

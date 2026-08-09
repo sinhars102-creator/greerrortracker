@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Star } from "lucide-react";
 import { getScreenshotUrl, uploadScreenshot, compressImageDataUrl, dataUrlToBlobAndParts } from "@/lib/entries";
 import { createClient } from "@/lib/supabase/client";
 import { EXTRACTION_VERSION } from "@/lib/extractionVersion";
@@ -434,7 +435,18 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
           <span className="pill" style={{ background: accent, color: "#0F1115" }}>{entry.section}</span>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>{entry.subtype}</span>
         </div>
-        <button className="btn" onClick={startEdit} style={{ padding: "4px 10px", fontSize: 11.5 }}>Edit question</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            className="btn"
+            onClick={() => onEdited?.({ starred: !entry.starred })}
+            title={entry.starred ? "Unmark as important" : "Mark as important"}
+            aria-label={entry.starred ? "Unmark as important" : "Mark as important"}
+            style={{ padding: "4px 8px", display: "flex", alignItems: "center" }}
+          >
+            <Star size={15} fill={entry.starred ? "var(--amber)" : "none"} color={entry.starred ? "var(--amber)" : "currentColor"} />
+          </button>
+          <button className="btn" onClick={startEdit} style={{ padding: "4px 10px", fontSize: 11.5 }}>Edit question</button>
+        </div>
       </div>
 
       {entry.passage && (
