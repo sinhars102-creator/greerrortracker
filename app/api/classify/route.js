@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { callClaude, extractJSON, MISTAKE_TYPES } from "@/lib/anthropic";
 
+export const maxDuration = 30;
+
 // On-demand classification only (mistake types, insight, related entries,
 // word/quant-trap detection). Text-only — questionText/passage are expected
 // to already be populated (typed, or extracted via /api/extract-question

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { extractQuestionFromImage } from "@/lib/anthropic";
 
+export const maxDuration = 30;
+
 export async function POST(request) {
   try {
     const { image, subtype, needsPassage } = await request.json();

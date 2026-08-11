@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { callClaude, extractJSON, imageUrlToContentBlock } from "@/lib/anthropic";
 import { EXTRACTION_VERSION } from "@/lib/extractionVersion";
 
+export const maxDuration = 30;
+
 function letterIndex(letter) {
   const c = letter.toUpperCase().charCodeAt(0) - 65;
   return c >= 0 && c <= 25 ? c : -1;
