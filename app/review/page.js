@@ -58,23 +58,83 @@ function parseSourceFromParams(params) {
 // In-progress sessions survive a tab close/reload/nav-away — closing mid-way
 // through 125 questions and losing the "already answered" set meant they'd
 // all resurface next time (no due-date gating to naturally push them out).
-function sessionKey(section) { return `review_session_${section}`; }
-function loadSavedSession(section) {
+//
+// Keyed by (section, source) rather than just section, so pausing a
+// Mistakes session and then starting a Recent one keeps BOTH resumable
+// independently instead of the second overwriting the first. A separate
+// "active" pointer per section tracks which one (if any) is the currently
+// live session, so a plain refresh mid-review still resumes that exact one
+// with no picking required — the multi-session list is only for sessions
+// you've explicitly paused.
+function sessionPrefix(section) { return `review_session::${section}::`; }
+function sessionKeyFor(section, source) { return sessionPrefix(section) + JSON.stringify(source); }
+
+function loadSessionFor(section, source) {
   if (typeof window === "undefined") return null;
   try {
-    const parsed = JSON.parse(localStorage.getItem(sessionKey(section)));
+    const parsed = JSON.parse(localStorage.getItem(sessionKeyFor(section, source)));
     return parsed && parsed.source ? parsed : null;
   } catch { return null; }
 }
-function saveSession(section, source, answeredIds, skippedIds) {
+function saveSessionFor(section, source, answeredIds, skippedIds) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(sessionKey(section), JSON.stringify({ source, answeredIds: [...answeredIds], skippedIds: [...skippedIds] }));
+    localStorage.setItem(sessionKeyFor(section, source), JSON.stringify({ source, answeredIds: [...answeredIds], skippedIds: [...skippedIds] }));
   } catch { /* storage full/unavailable — session just won't resume */ }
 }
-function clearSession(section) {
+function clearSessionKey(key) {
   if (typeof window === "undefined") return;
-  try { localStorage.removeItem(sessionKey(section)); } catch {}
+  try { localStorage.removeItem(key); } catch {}
+}
+
+// Every paused (or live) session stored for this section, for the setup
+// screen's "resume one of these" list.
+function listSessionsFor(section) {
+  if (typeof window === "undefined") return [];
+  const prefix = sessionPrefix(section);
+  const results = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      try {
+        const parsed = JSON.parse(localStorage.getItem(key));
+        if (parsed && parsed.source) results.push({ key, ...parsed });
+      } catch { /* corrupted entry — skip it */ }
+    }
+  } catch { return []; }
+  return results;
+}
+
+function activeKey(section) { return `review_active_${section}`; }
+function loadActiveSource(section) {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(activeKey(section));
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveActiveSource(section, source) {
+  if (typeof window === "undefined") return;
+  try {
+    if (source) localStorage.setItem(activeKey(section), JSON.stringify(source));
+    else localStorage.removeItem(activeKey(section));
+  } catch {}
+}
+
+// Human-readable label for a paused session's source, for the resume list.
+function describeSource(source) {
+  if (!source || source.type === "all") return "Complete Review";
+  if (source.type === "tier") {
+    const info = TIER_INFO.find((t) => t.key === source.tier);
+    return (info ? info.label : source.tier) + (source.unattemptedOnly ? " — not attempted" : "");
+  }
+  if (source.type === "loggedWindow") return `Logged in the last ${source.days} day${source.days === 1 ? "" : "s"}`;
+  if (source.type === "staleWindow") return `Not reviewed in the last ${source.days} day${source.days === 1 ? "" : "s"}`;
+  if (source.type === "moreThanMistakes") return `Mistaken more than ${source.threshold} time${source.threshold === 1 ? "" : "s"}`;
+  if (source.type === "subtype") return source.subtype;
+  if (source.type === "loggedSince") return `Logged since ${source.date}`;
+  return "Review session";
 }
 
 // Without a ?section= URL param (a plain refresh, or just navigating to
@@ -112,16 +172,24 @@ function saveLoggedSinceDate(section, date) {
   } catch { /* storage full/unavailable — pick just won't be remembered */ }
 }
 
-// A Dashboard deep link always wins and starts a fresh session; otherwise
-// resume whatever was saved for this section, if anything.
+// A Dashboard deep link always wins and starts a fresh session. Otherwise,
+// only the section's "active" (currently-live, not explicitly paused)
+// session auto-resumes — this is what makes a plain refresh mid-review
+// seamless without picking anything. Any other paused sessions for this
+// section stay in storage and show up as a resume list on the setup screen
+// instead of fighting to be "the" one that auto-loads.
 function computeInitialState(searchParams) {
   const section = SECTIONS.includes(searchParams.get("section")) ? searchParams.get("section") : (loadLastSection() || "Verbal");
   const deepLinkSource = parseSourceFromParams(searchParams);
-  const saved = deepLinkSource ? null : loadSavedSession(section);
+  if (deepLinkSource) {
+    return { section, source: deepLinkSource, started: true, answeredIds: new Set(), skippedIds: new Set() };
+  }
+  const activeSource = loadActiveSource(section);
+  const saved = activeSource ? loadSessionFor(section, activeSource) : null;
   return {
     section,
-    source: deepLinkSource || (saved && saved.source) || null,
-    started: !!deepLinkSource || !!saved,
+    source: saved ? saved.source : null,
+    started: !!saved,
     answeredIds: new Set(saved ? saved.answeredIds : []),
     skippedIds: new Set(saved ? saved.skippedIds : []),
   };
@@ -140,25 +208,51 @@ function ReviewPageInner() {
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
   const [loggedSinceDate, setLoggedSinceDate] = useState(() => loadLoggedSinceDate(initial.section));
   const dateInputRef = useRef(null);
+  // Bumped after an explicit "Discard" so the paused-session banner
+  // recomputes — localStorage writes alone don't trigger a re-render.
+  const [pausedVersion, setPausedVersion] = useState(0);
 
   const refresh = () => listEntries().then(setEntries);
   useEffect(() => { refresh(); }, []);
 
+  // Every session paused for this section — the setup screen lists these so
+  // any of them can be resumed individually, not just the most recent one.
+  const pausedList = useMemo(
+    () => (started ? [] : listSessionsFor(section)),
+    // pausedVersion isn't read in the body — it's a pure invalidation
+    // trigger, bumped after "Discard" so this recomputes even though the
+    // underlying localStorage write itself doesn't cause a re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [section, started, pausedVersion]
+  );
+
   useEffect(() => { saveLastSection(section); }, [section]);
   useEffect(() => { saveLoggedSinceDate(section, loggedSinceDate); }, [section, loggedSinceDate]);
 
-  // Each section remembers its own "logged since" pick — switching sections
-  // should load that section's own saved date, not carry over the other's.
+  // Each section remembers its own "logged since" pick and its own active
+  // session — switching sections auto-resumes whatever was LIVE there (not
+  // explicitly paused), same as a plain refresh would. Anything explicitly
+  // paused shows up in that section's resume list instead.
   const switchSection = (s) => {
     setSection(s);
     setLoggedSinceDate(loadLoggedSinceDate(s));
+    const activeSource = loadActiveSource(s);
+    const saved = activeSource ? loadSessionFor(s, activeSource) : null;
+    setSource(saved ? saved.source : null);
+    setAnsweredIds(new Set(saved ? saved.answeredIds : []));
+    setSkippedIds(new Set(saved ? saved.skippedIds : []));
+    setStarted(!!saved);
+    setMode(null);
   };
 
   // Persist progress as it happens, so an exit mid-session (tab close,
-  // reload, navigating away) can pick back up where it left off.
+  // reload, navigating away) can pick back up where it left off. Also marks
+  // this (section, source) as the section's "active" session, so a plain
+  // refresh resumes it directly without needing the resume list.
   useEffect(() => {
     if (!started || !source) return;
-    saveSession(section, source, answeredIds, skippedIds);
+    saveSessionFor(section, source, answeredIds, skippedIds);
+    saveActiveSource(section, source);
   }, [section, source, started, answeredIds, skippedIds]);
 
   const bySection = useMemo(() => (entries || []).filter((e) => e.section === section && !e.pending), [entries, section]);
@@ -216,8 +310,11 @@ function ReviewPageInner() {
   // Truly nothing left (not even skipped ones to revisit) — no reason to
   // keep a resumable session around for an empty queue.
   useEffect(() => {
-    if (started && entries && !current && skippedIds.size === 0) clearSession(section);
-  }, [started, entries, current, skippedIds.size, section]);
+    if (started && entries && !current && skippedIds.size === 0 && source) {
+      clearSessionKey(sessionKeyFor(section, source));
+      saveActiveSource(section, null);
+    }
+  }, [started, entries, current, skippedIds.size, section, source]);
 
   const handleSkip = () => setSkippedIds((prev) => new Set(prev).add(current.id));
 
@@ -244,15 +341,24 @@ function ReviewPageInner() {
     await refresh();
   };
 
+  // If this exact filter already has a paused session, resume its progress
+  // instead of silently wiping it — clicking "Mistakes" again after having
+  // paused a Mistakes session should continue it, not restart from zero.
   const startWithSource = (src) => {
+    const existing = loadSessionFor(section, src);
     setSource(src);
-    setSkippedIds(new Set());
-    setAnsweredIds(new Set());
+    setSkippedIds(new Set(existing ? existing.skippedIds : []));
+    setAnsweredIds(new Set(existing ? existing.answeredIds : []));
     setStarted(true);
   };
 
+  // Pauses, doesn't discard — the in-progress session (source/answeredIds/
+  // skippedIds) stays saved in localStorage so it can be resumed later from
+  // the setup screen's resume list. Clearing the "active" pointer (but not
+  // the session data itself) is what stops it from auto-resuming on a
+  // future refresh — it becomes just another paused session to pick from.
   const backToSetup = () => {
-    clearSession(section);
+    saveActiveSource(section, null);
     setStarted(false);
     setSource(null);
     setMode(null);
@@ -277,8 +383,43 @@ function ReviewPageInner() {
   }
 
   if (!started) {
+    const resumeSession = (saved) => {
+      setSource(saved.source);
+      setAnsweredIds(new Set(saved.answeredIds));
+      setSkippedIds(new Set(saved.skippedIds));
+      setStarted(true);
+    };
+    const discardPaused = (key) => {
+      clearSessionKey(key);
+      setPausedVersion((v) => v + 1);
+    };
     return (
       <AppShell>
+        {pausedList.length > 0 && (
+          <div className="card" style={{ padding: 16, marginBottom: 16, border: "1px solid var(--amber)" }}>
+            <div style={{ fontSize: 11, color: "var(--amber)", textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 10 }}>
+              Paused {section} session{pausedList.length === 1 ? "" : "s"}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {pausedList.map((p) => (
+                <div key={p.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                  <div style={{ fontSize: 13 }}>
+                    {describeSource(p.source)} — {p.answeredIds.length} answered
+                    {p.skippedIds.length > 0 ? `, ${p.skippedIds.length} skipped` : ""}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="btn" style={{ fontSize: 12, padding: "6px 12px", color: "var(--red)" }} onClick={() => discardPaused(p.key)}>
+                      Discard
+                    </button>
+                    <button className="btn btn-primary" style={{ fontSize: 12, padding: "6px 12px" }} onClick={() => resumeSession(p)}>
+                      Resume
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="card" style={{ padding: 22 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
             <div className="pills" style={{ display: "flex", gap: 8 }}>
@@ -459,9 +600,10 @@ function ReviewPageInner() {
         <button
           className="btn"
           onClick={backToSetup}
-          style={{ fontSize: 13, padding: "8px 16px", color: "var(--red)", borderColor: "var(--red)", fontWeight: 600 }}
+          title="Your progress is saved — pick this section back up any time"
+          style={{ fontSize: 13, padding: "8px 16px", color: "var(--amber)", borderColor: "var(--amber)", fontWeight: 600 }}
         >
-          Exit session
+          Pause session
         </button>
       </div>
       <QuestionCard
