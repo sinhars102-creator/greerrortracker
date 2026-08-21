@@ -6,6 +6,7 @@ import AppShell from "@/components/AppShell";
 import { createClient } from "@/lib/supabase/client";
 import {
   BASE_WORDS, listVocabProgress, upsertVocabProgress, listCustomVocabWords, addCustomVocabWord,
+  deleteCustomVocabWord, listHiddenVocabWords, hideVocabWord, deleteVocabProgress,
   listVocabGroups, createVocabGroup, deleteVocabGroup, deleteAutoVocabGroups,
 } from "@/lib/vocab";
 
@@ -17,7 +18,7 @@ const BUCKET_INFO = {
 
 // Spaced-repetition intervals, in days, before a word is due again.
 // "Learnt" words stretch out further each time they're confirmed correct in a row.
-const BASE_INTERVAL_DAYS = { learning: 1, revise: 3, learnt: 6 };
+const BASE_INTERVAL_DAYS = { learning: 2, revise: 3, learnt: 6 };
 
 function computeNextDue(bucket, streak) {
   const base = BASE_INTERVAL_DAYS[bucket] || 1;
@@ -99,6 +100,7 @@ function VocabReviewPageInner() {
   const [addWordsInput, setAddWordsInput] = useState("");
   const [addWordsMsg, setAddWordsMsg] = useState("");
   const [progress, setProgress] = useState({});
+  const [hiddenWords, setHiddenWords] = useState(() => new Set());
   const [sessionResults, setSessionResults] = useState({}); // word -> bucket, this session
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -113,7 +115,10 @@ function VocabReviewPageInner() {
   const [autoGroupMsg, setAutoGroupMsg] = useState("");
   const inputRef = useRef(null);
 
-  const allWords = useMemo(() => [...BASE_WORDS, ...customWords], [customWords]);
+  const allWords = useMemo(
+    () => [...BASE_WORDS, ...customWords].filter((x) => !hiddenWords.has(x.w)),
+    [customWords, hiddenWords]
+  );
   const wordMap = useMemo(() => Object.fromEntries(allWords.map((x) => [x.w.toLowerCase(), x])), [allWords]);
 
   useEffect(() => {
@@ -122,10 +127,11 @@ function VocabReviewPageInner() {
         const supabase = createClient();
         const { data: { user } } = await supabase.auth.getUser();
         setUserId(user.id);
-        const [prog, custom, savedGroups] = await Promise.all([listVocabProgress(), listCustomVocabWords(), listVocabGroups()]);
+        const [prog, custom, savedGroups, hidden] = await Promise.all([listVocabProgress(), listCustomVocabWords(), listVocabGroups(), listHiddenVocabWords()]);
         setProgress(prog);
-        setCustomWords(custom.map((c) => ({ w: c.w, m: c.m })));
+        setCustomWords(custom.map((c) => ({ id: c.id, w: c.w, m: c.m })));
         setGroups(savedGroups);
+        setHiddenWords(new Set(hidden));
       } catch (e) {
         setLoadError(e.message || "Couldn't load your vocab data.");
       } finally {
@@ -333,6 +339,38 @@ function VocabReviewPageInner() {
     startSession(inBucket);
   }
 
+  // Priority mix: guarantees every word marked wrong last time ("learning"
+  // bucket), then tops up to 50 with never-reviewed words (custom words
+  // first since they were all added after the base list, newest-added
+  // within each group first), then random words from the rest of the list
+  // if there still aren't 50. Final set is shuffled for presentation.
+  function loadPriorityMix() {
+    setError("");
+    const TARGET = 50;
+    const customWordSet = new Set(customWords.map((c) => c.w));
+    const wrongLast = allWords.filter((x) => progress[x.w] && progress[x.w].bucket === "learning");
+    const neverReviewed = allWords.filter((x) => !progress[x.w]);
+    const neverReviewedNewestFirst = [
+      ...neverReviewed.filter((x) => customWordSet.has(x.w)).reverse(),
+      ...neverReviewed.filter((x) => !customWordSet.has(x.w)).reverse(),
+    ];
+
+    let selected = shuffleArray(wrongLast).slice(0, TARGET);
+    if (selected.length < TARGET) {
+      selected = [...selected, ...neverReviewedNewestFirst.slice(0, TARGET - selected.length)];
+    }
+    if (selected.length < TARGET) {
+      const chosenWords = new Set(selected.map((x) => x.w));
+      const rest = shuffleArray(allWords.filter((x) => !chosenWords.has(x.w)));
+      selected = [...selected, ...rest.slice(0, TARGET - selected.length)];
+    }
+    if (selected.length === 0) {
+      setError("No words available yet — add some words first.");
+      return;
+    }
+    startSession(shuffleArray(selected));
+  }
+
   async function submitAnswer() {
     if (!answer.trim()) return;
     setStage("grading");
@@ -439,6 +477,43 @@ function VocabReviewPageInner() {
     setStage("quiz");
   }
 
+  async function deleteCurrentWord() {
+    const current = queue[idx];
+    if (!current) return;
+    try {
+      const customEntry = customWords.find((c) => c.w === current.w);
+      if (customEntry) {
+        await deleteCustomVocabWord(customEntry.id);
+        setCustomWords((prev) => prev.filter((c) => c.w !== current.w));
+      } else {
+        await hideVocabWord(userId, current.w);
+        setHiddenWords((prev) => new Set(prev).add(current.w));
+      }
+      await deleteVocabProgress(current.w).catch(() => {});
+      setProgress((prev) => {
+        const next = { ...prev };
+        delete next[current.w];
+        return next;
+      });
+    } catch (e) {
+      setError(e.message || "Couldn't delete this word.");
+      return;
+    }
+
+    const rest = queue.filter((_, i) => i !== idx);
+    setQueue(rest);
+    setAnswer("");
+    setGrade(null);
+    setClarifyQuestion("");
+    setClarifyAnswer("");
+    if (rest.length === 0) {
+      setStage("done");
+    } else {
+      setIdx(Math.min(idx, rest.length - 1));
+      setStage("quiz");
+    }
+  }
+
   function shuffleQueue() {
     const current = queue[idx];
     const shuffled = shuffleArray(queue);
@@ -510,6 +585,7 @@ function VocabReviewPageInner() {
             <button className="btn btn-primary" onClick={handleStart}>Start review</button>
             <button className="btn" onClick={loadAll}>Load all ({allWords.length})</button>
             <button className="btn" onClick={loadDue}>Load due now ({dueNowCount})</button>
+            <button className="btn" onClick={loadPriorityMix} title="Every word wrong last time, topped up with never-reviewed words, then randomized">Priority mix (50)</button>
             <button className="btn" onClick={() => { setCopyMsg(""); setStage("browse"); }}>View full list &amp; status</button>
           </div>
 
@@ -643,6 +719,7 @@ function VocabReviewPageInner() {
                   <button className="btn" onClick={() => jumpTo(idx + 1 < queue.length ? idx + 1 : idx)} disabled={idx + 1 >= queue.length}>Skip to next</button>
                   <button className="btn" onClick={moveToEnd}>Move to end</button>
                   <button className="btn" onClick={shuffleQueue}>Shuffle order</button>
+                  <button className="btn btn-red" onClick={deleteCurrentWord} title="Permanently remove this word from your vocab list">Delete word</button>
                 </div>
               </>
             )}

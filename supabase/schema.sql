@@ -178,6 +178,24 @@ create policy "Users manage their own vocab progress"
   on vocab_progress for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ============================================================
+-- VOCAB HIDDEN WORDS (per-user delete for BASE_WORDS, which is a shared
+-- static list in code — a word can't be removed from it for one user, so
+-- deleting a base word instead adds it here and every read filters it out)
+-- ============================================================
+create table if not exists vocab_hidden_words (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  word text not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists vocab_hidden_words_user_word_idx on vocab_hidden_words(user_id, word);
+
+alter table vocab_hidden_words enable row level security;
+create policy "Users manage their own hidden vocab words"
+  on vocab_hidden_words for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ============================================================
 -- VOCAB GROUPS (saved clusters of similar-meaning words, reviewable
 -- together as their own session)
 -- ============================================================
