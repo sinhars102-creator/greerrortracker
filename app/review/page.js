@@ -5,9 +5,10 @@ import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import QuestionCard from "@/components/QuestionCard";
 import { listEntries, updateEntry, groupForSequentialPractice } from "@/lib/entries";
-import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, filterLoggedSinceDate, RECENT_DAYS } from "@/lib/practiceFilters";
+import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, filterLoggedSinceDate, filterPriorityMix, RECENT_DAYS } from "@/lib/practiceFilters";
 
 const MISTAKE_THRESHOLD_OPTIONS = [0, 1, 2, 3, 4, 5, 7, 10];
+const PRIORITY_MIX_COUNT_OPTIONS = [10, 20, 30, 40, 50, 75, 100];
 const VERBAL_BREAKDOWN_SUBTYPES = ["Reading Comprehension", "Text Completion", "Sentence Equivalence", "Vocabulary"];
 
 const INTERVALS = [1, 3, 7, 14, 30];
@@ -134,6 +135,7 @@ function describeSource(source) {
   if (source.type === "moreThanMistakes") return `Mistaken more than ${source.threshold} time${source.threshold === 1 ? "" : "s"}`;
   if (source.type === "subtype") return source.subtype;
   if (source.type === "loggedSince") return `Logged since ${source.date}`;
+  if (source.type === "priorityMix") return `Priority set (${source.limit})`;
   return "Review session";
 }
 
@@ -206,6 +208,7 @@ function ReviewPageInner() {
   const [skippedIds, setSkippedIds] = useState(initial.skippedIds);
   const [answeredIds, setAnsweredIds] = useState(initial.answeredIds);
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
+  const [priorityMixCount, setPriorityMixCount] = useState(40);
   const [loggedSinceDate, setLoggedSinceDate] = useState(() => loadLoggedSinceDate(initial.section));
   const dateInputRef = useRef(null);
   // Bumped after an explicit "Discard" so the paused-session banner
@@ -278,6 +281,10 @@ function ReviewPageInner() {
   const mistakeThresholdCount = useMemo(
     () => filterMoreThanMistakes(scopedBySection, mistakeThreshold).length,
     [scopedBySection, mistakeThreshold]
+  );
+  const priorityMixCountAvailable = useMemo(
+    () => filterPriorityMix(scopedBySection, priorityMixCount).length,
+    [scopedBySection, priorityMixCount]
   );
   const loggedSinceCount = scopedBySection.length;
   const verbalSubtypeBreakdown = useMemo(() => {
@@ -504,6 +511,32 @@ function ReviewPageInner() {
                 <div className="serif" style={{ fontSize: 17, fontWeight: 600, marginBottom: 4 }}>Tier-wise Review</div>
                 <div style={{ fontSize: 13, color: "var(--muted)" }}>Pick exactly one tier to practice today.</div>
               </button>
+              <div className="card" style={{ padding: 18, border: "1px solid var(--border)" }}>
+                <div className="serif" style={{ fontSize: 17, fontWeight: 600, marginBottom: 4 }}>Priority Set</div>
+                <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
+                  Wrong ones first (worst offenders first), then the rest newest-logged first.
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <select
+                    value={priorityMixCount}
+                    onChange={(e) => setPriorityMixCount(parseInt(e.target.value, 10))}
+                    style={{ width: "auto" }}
+                  >
+                    {PRIORITY_MIX_COUNT_OPTIONS.map((n) => <option key={n} value={n}>{n} questions</option>)}
+                  </select>
+                  <span className="mono" style={{ fontSize: 14, color: "var(--muted)", marginLeft: "auto" }}>
+                    {priorityMixCountAvailable} available
+                  </span>
+                </div>
+                <button
+                  className="btn btn-primary"
+                  style={{ width: "100%", marginTop: 12 }}
+                  disabled={!priorityMixCountAvailable}
+                  onClick={() => priorityMixCountAvailable && startWithSource({ type: "priorityMix", limit: priorityMixCount })}
+                >
+                  Start ({priorityMixCountAvailable})
+                </button>
+              </div>
             </div>
           )}
 
