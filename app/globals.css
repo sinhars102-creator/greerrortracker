@@ -58,6 +58,23 @@ html, body {
   font-weight: 600;
 }
 
+/* Scoped to .pills toggle groups (Quant/Verbal switches), not the many
+   inline-styled .pill badges elsewhere in the app, so this doesn't affect
+   those. Those pass their own background/color inline; toggle buttons
+   don't, which is why "active" had no visible effect before. */
+.pills .pill {
+  cursor: pointer;
+  background: var(--panel2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.pills .pill:hover { border-color: var(--faint); }
+.pills .pill.active {
+  background: var(--amber);
+  color: #14161B;
+  border-color: var(--amber);
+}
+
 input, textarea, select {
   background: var(--panel2);
   border: 1px solid var(--border);

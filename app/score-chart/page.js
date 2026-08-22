@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import AppShell from "@/components/AppShell";
 import { createClient } from "@/lib/supabase/client";
 import { listScores, createScore, updateScore, deleteScore } from "@/lib/scores";
@@ -111,32 +111,248 @@ function ScoreGrid({ section, scores, s1, s2 }) {
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 
-// Total (260-340) lives on a completely different scale than Quant/Verbal
-// (130-170) — plotting it on the same axis would either clip it off the top
-// or flatten Quant/Verbal into an unreadable sliver. Quant/Verbal use the
-// left axis, Total gets its own right-hand axis.
-function ScoreTrendChart({ testScores }) {
-  const data = testScores.map((s) => ({
-    date: s.testDate, Quant: s.quantScore, Verbal: s.verbalScore, Total: s.quantScore + s.verbalScore,
-  }));
+// Self-contained Quant/Verbal lookup — s1/s2 are controlled from the parent
+// so the reference table below can highlight whatever was last looked up,
+// but each card owns its own inputs; no toggle needed to switch between them.
+function ScoreLookupCard({ section, color, scores, s1, s2, onChangeS1, onChangeS2 }) {
+  const maxS1 = scores.length - 1;
+  const maxS2 = scores[0].length - 1;
+  const clampedS1 = s1 === null ? null : Math.min(Math.max(s1, 0), maxS1);
+  const clampedS2 = s2 === null ? null : Math.min(Math.max(s2, 0), maxS2);
+  const result = clampedS1 !== null && clampedS2 !== null ? scores[clampedS1][clampedS2] : null;
+  const resultDifficulty = clampedS1 !== null ? difficultyFor(section, clampedS1) : null;
+
   return (
-    <ResponsiveContainer width="100%" height={260}>
-      <LineChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: -16 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-        <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--muted)" }} />
-        <YAxis yAxisId="left" domain={[130, 170]} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-        <YAxis yAxisId="right" orientation="right" domain={[260, 340]} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-        <Tooltip
-          contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 6, fontSize: 12.5 }}
-          labelStyle={{ color: "var(--text)", fontWeight: 700, marginBottom: 4 }}
-          formatter={(value, name) => [value, name]}
-        />
-        <Legend wrapperStyle={{ fontSize: 12.5 }} />
-        <Line yAxisId="left" type="monotone" dataKey="Quant" stroke="var(--quant)" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 6 }} />
-        <Line yAxisId="left" type="monotone" dataKey="Verbal" stroke="var(--verbal)" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 6 }} />
-        <Line yAxisId="right" type="monotone" dataKey="Total" stroke="var(--amber)" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 6 }} />
-      </LineChart>
-    </ResponsiveContainer>
+    <div className="card" style={{ padding: 18, flex: 1, minWidth: 280 }}>
+      <div style={{ ...eyebrow, marginBottom: 12, color }}>{section} lookup</div>
+      <div style={{ display: "flex", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
+        <div>
+          <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
+            Section 1 (0-{maxS1})
+          </label>
+          <input
+            type="number"
+            min={0}
+            max={maxS1}
+            value={s1 ?? ""}
+            onChange={(e) => onChangeS1(e.target.value === "" ? null : parseInt(e.target.value, 10))}
+            style={{ width: 90 }}
+          />
+        </div>
+        <div>
+          <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
+            Section 2 (0-{maxS2})
+          </label>
+          <input
+            type="number"
+            min={0}
+            max={maxS2}
+            value={s2 ?? ""}
+            onChange={(e) => onChangeS2(e.target.value === "" ? null : parseInt(e.target.value, 10))}
+            style={{ width: 90 }}
+          />
+        </div>
+      </div>
+      {result !== null ? (
+        <div>
+          <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 2 }}>
+            Scaled score
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <span className="mono" style={{ fontSize: 32, fontWeight: 700, color: "var(--amber)" }}>{result}</span>
+            <span className="pill" style={{ background: DIFFICULTY_COLOR[resultDifficulty], color: "#0F1115", fontWeight: 700 }}>
+              {resultDifficulty}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 13, color: "var(--muted)" }}>Enter both values to see your scaled score.</div>
+      )}
+    </div>
+  );
+}
+
+// Sample mean/standard deviation (n-1 denominator — these are a sample of
+// practice tests, not the full population of tests you'll ever take).
+function computeStats(values) {
+  const n = values.length;
+  if (n === 0) return null;
+  const mean = values.reduce((a, b) => a + b, 0) / n;
+  if (n < 2) return { n, mean, sd: 0 };
+  const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / (n - 1);
+  return { n, mean, sd: Math.sqrt(variance) };
+}
+
+const round1 = (v) => Math.round(v * 10) / 10;
+
+// Gaussian PDF sampled across mean ± ~2.8sd, so both ±2σ reference lines
+// always fall inside the visible chart. Falls back to a narrow fixed
+// window when sd is 0 (every logged score in range was identical).
+function buildBellCurve(mean, sd) {
+  const spread = sd > 0 ? sd * 2.8 : 5;
+  const domainMin = mean - spread;
+  const domainMax = mean + spread;
+  const steps = 120;
+  const data = [];
+  for (let i = 0; i <= steps; i++) {
+    const x = domainMin + ((domainMax - domainMin) * i) / steps;
+    const y = sd > 0
+      ? (1 / (sd * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * ((x - mean) / sd) ** 2)
+      : (Math.abs(x - mean) < (domainMax - domainMin) / steps ? 1 : 0);
+    data.push({ x, y });
+  }
+  return { data, domainMin, domainMax };
+}
+
+function DistributionChart({ label, color, values }) {
+  const stats = computeStats(values);
+  if (!stats) {
+    return (
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, color, marginBottom: 8 }}>{label}</div>
+        <div style={{ fontSize: 12.5, color: "var(--muted)" }}>No {label} scores in this range.</div>
+      </div>
+    );
+  }
+  if (stats.n < 2) {
+    return (
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, color, marginBottom: 8 }}>{label}</div>
+        <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          Only 1 score in this range ({round1(stats.mean)}) — log at least 2 to see a distribution.
+        </div>
+      </div>
+    );
+  }
+  const { mean, sd } = stats;
+  const { data, domainMin, domainMax } = buildBellCurve(mean, sd);
+  const markers = [
+    { x: mean - 2 * sd, tag: "-2σ", value: round1(mean - 2 * sd), key: "m2" },
+    { x: mean - sd, tag: "-1σ", value: round1(mean - sd), key: "m1" },
+    { x: mean, tag: "Mean", value: round1(mean), key: "mean" },
+    { x: mean + sd, tag: "+1σ", value: round1(mean + sd), key: "p1" },
+    { x: mean + 2 * sd, tag: "+2σ", value: round1(mean + 2 * sd), key: "p2" },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color }}>{label}</div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>n={stats.n} · mean {round1(mean)} · σ {round1(sd)}</div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+        {markers.map((m) => (
+          <div
+            key={m.key}
+            className="mono"
+            style={{
+              fontSize: 11,
+              padding: "3px 8px",
+              borderRadius: 5,
+              border: `1px solid ${m.key === "mean" ? color : "var(--border)"}`,
+              color: m.key === "mean" ? color : "var(--muted)",
+              fontWeight: m.key === "mean" ? 700 : 400,
+            }}
+          >
+            {m.tag} {m.value}
+          </div>
+        ))}
+      </div>
+      <ResponsiveContainer width="100%" height={220}>
+        <AreaChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: -16 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <XAxis
+            dataKey="x"
+            type="number"
+            domain={[domainMin, domainMax]}
+            tick={{ fontSize: 10, fill: "var(--muted)" }}
+            tickFormatter={(v) => Math.round(v)}
+          />
+          <YAxis hide domain={[0, "dataMax"]} />
+          <Tooltip
+            contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 6, fontSize: 12 }}
+            labelFormatter={(v) => `Score ${round1(v)}`}
+            formatter={(value) => [Number(value).toFixed(4), "density"]}
+          />
+          <Area type="monotone" dataKey="y" stroke={color} fill={color} fillOpacity={0.18} strokeWidth={2} isAnimationActive={false} />
+          {markers.map((m) => (
+            <ReferenceLine
+              key={m.key}
+              x={m.x}
+              stroke={m.key === "mean" ? color : "var(--muted)"}
+              strokeDasharray={m.key === "mean" ? undefined : "4 3"}
+            />
+          ))}
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+const REPEAT_FILTER_OPTIONS = [
+  { value: "all", label: "All tests" },
+  { value: "new", label: "New tests only" },
+  { value: "repeat", label: "Repeats only" },
+];
+
+function ScoreDistributionSection({ testScores }) {
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [repeatFilter, setRepeatFilter] = useState("all");
+
+  const filtered = testScores.filter((s) => {
+    if (fromDate && s.testDate < fromDate) return false;
+    if (toDate && s.testDate > toDate) return false;
+    if (repeatFilter === "new" && s.isRepeat) return false;
+    if (repeatFilter === "repeat" && !s.isRepeat) return false;
+    return true;
+  });
+  const quantValues = filtered.map((s) => s.quantScore);
+  const verbalValues = filtered.map((s) => s.verbalScore);
+  const totalValues = filtered.map((s) => s.quantScore + s.verbalScore);
+
+  return (
+    <div className="card" style={{ padding: 18, marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 18 }}>
+        <div style={eyebrow}>Score distribution</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select value={repeatFilter} onChange={(e) => setRepeatFilter(e.target.value)} style={{ width: "auto", fontSize: 12.5 }}>
+            {REPEAT_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <label style={{ fontSize: 12, color: "var(--muted)" }}>From</label>
+          <input
+            type="date"
+            value={fromDate}
+            max={toDate || todayISO()}
+            onChange={(e) => setFromDate(e.target.value)}
+            style={{ width: "auto", fontSize: 12.5 }}
+          />
+          <label style={{ fontSize: 12, color: "var(--muted)" }}>To</label>
+          <input
+            type="date"
+            value={toDate}
+            min={fromDate}
+            max={todayISO()}
+            onChange={(e) => setToDate(e.target.value)}
+            style={{ width: "auto", fontSize: 12.5 }}
+          />
+          {(fromDate || toDate || repeatFilter !== "all") && (
+            <button
+              className="btn"
+              style={{ fontSize: 11, padding: "4px 10px" }}
+              onClick={() => { setFromDate(""); setToDate(""); setRepeatFilter("all"); }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 24 }}>
+        <DistributionChart label="Total" color="var(--amber)" values={totalValues} />
+        <DistributionChart label="Quant" color="var(--quant)" values={quantValues} />
+        <DistributionChart label="Verbal" color="var(--verbal)" values={verbalValues} />
+      </div>
+    </div>
   );
 }
 
@@ -145,6 +361,7 @@ function LogScoreForm({ onLogged }) {
   const [quantScore, setQuantScore] = useState("");
   const [verbalScore, setVerbalScore] = useState("");
   const [notes, setNotes] = useState("");
+  const [isRepeat, setIsRepeat] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -161,11 +378,12 @@ function LogScoreForm({ onLogged }) {
     try {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
-      const saved = await createScore({ testDate, quantScore: q, verbalScore: v, notes }, user.id);
+      const saved = await createScore({ testDate, quantScore: q, verbalScore: v, notes, isRepeat }, user.id);
       onLogged(saved);
       setQuantScore("");
       setVerbalScore("");
       setNotes("");
+      setIsRepeat(false);
     } catch (err) {
       setError(err.message || "Couldn't save this score.");
     } finally {
@@ -191,6 +409,10 @@ function LogScoreForm({ onLogged }) {
         <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>Notes (optional)</label>
         <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Manhattan practice test 3" style={{ width: "100%" }} />
       </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--muted)", cursor: "pointer", paddingBottom: 8 }}>
+        <input type="checkbox" checked={isRepeat} onChange={(e) => setIsRepeat(e.target.checked)} style={{ width: "auto" }} />
+        Repeat test
+      </label>
       <button className="btn btn-primary" type="submit" disabled={submitting}>{submitting ? "Saving…" : "Log score"}</button>
       {error && <div style={{ fontSize: 12, color: "var(--red)", width: "100%" }}>{error}</div>}
     </form>
@@ -203,6 +425,7 @@ function ScoreRow({ score, onUpdate, onDelete }) {
   const [quantScore, setQuantScore] = useState(score.quantScore);
   const [verbalScore, setVerbalScore] = useState(score.verbalScore);
   const [notes, setNotes] = useState(score.notes);
+  const [isRepeat, setIsRepeat] = useState(!!score.isRepeat);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -211,6 +434,7 @@ function ScoreRow({ score, onUpdate, onDelete }) {
     setQuantScore(score.quantScore);
     setVerbalScore(score.verbalScore);
     setNotes(score.notes);
+    setIsRepeat(!!score.isRepeat);
     setError("");
     setEditing(true);
   };
@@ -225,7 +449,7 @@ function ScoreRow({ score, onUpdate, onDelete }) {
     setSaving(true);
     setError("");
     try {
-      await onUpdate(score.id, { testDate, quantScore: q, verbalScore: v, notes });
+      await onUpdate(score.id, { testDate, quantScore: q, verbalScore: v, notes, isRepeat });
       setEditing(false);
     } catch (err) {
       setError(err.message || "Couldn't save changes.");
@@ -242,6 +466,10 @@ function ScoreRow({ score, onUpdate, onDelete }) {
           <input type="number" min={130} max={170} value={quantScore} onChange={(e) => setQuantScore(e.target.value)} style={{ width: 70, fontSize: 12.5 }} />
           <input type="number" min={130} max={170} value={verbalScore} onChange={(e) => setVerbalScore(e.target.value)} style={{ width: 70, fontSize: 12.5 }} />
           <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="notes" style={{ flex: 1, minWidth: 120, fontSize: 12.5 }} />
+          <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "var(--muted)", cursor: "pointer" }}>
+            <input type="checkbox" checked={isRepeat} onChange={(e) => setIsRepeat(e.target.checked)} style={{ width: "auto" }} />
+            Repeat
+          </label>
           <button className="btn btn-primary" style={{ fontSize: 11, padding: "4px 10px" }} onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
           <button className="btn" style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => setEditing(false)} disabled={saving}>Cancel</button>
         </div>
@@ -256,6 +484,14 @@ function ScoreRow({ score, onUpdate, onDelete }) {
       <span className="mono" style={{ color: "var(--quant)", fontWeight: 700 }}>Q {score.quantScore}</span>
       <span className="mono" style={{ color: "var(--verbal)", fontWeight: 700 }}>V {score.verbalScore}</span>
       <span className="mono" style={{ fontWeight: 700 }}>Σ {score.quantScore + score.verbalScore}</span>
+      {score.isRepeat && (
+        <span
+          className="mono"
+          style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", padding: "2px 6px", borderRadius: 4, border: "1px solid var(--amber)", color: "var(--amber)" }}
+        >
+          Repeat
+        </span>
+      )}
       {score.notes && <span style={{ color: "var(--muted)", flex: 1 }}>{score.notes}</span>}
       <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={startEdit}>Edit</button>
       <button className="btn" style={{ fontSize: 11, padding: "3px 8px", color: "var(--red)" }} onClick={() => onDelete(score.id)}>Delete</button>
@@ -265,8 +501,10 @@ function ScoreRow({ score, onUpdate, onDelete }) {
 
 export default function ScoreChartPage() {
   const [section, setSection] = useState("Quant");
-  const [s1, setS1] = useState(null);
-  const [s2, setS2] = useState(null);
+  const [quantS1, setQuantS1] = useState(null);
+  const [quantS2, setQuantS2] = useState(null);
+  const [verbalS1, setVerbalS1] = useState(null);
+  const [verbalS2, setVerbalS2] = useState(null);
   const [testScores, setTestScores] = useState(null);
 
   useEffect(() => { listScores().then(setTestScores).catch(() => setTestScores([])); }, []);
@@ -288,10 +526,10 @@ export default function ScoreChartPage() {
   const scores = section === "Quant" ? QUANT_SCORES : VERBAL_SCORES;
   const maxS1 = scores.length - 1;
   const maxS2 = scores[0].length - 1;
-  const clampedS1 = s1 === null ? null : Math.min(Math.max(s1, 0), maxS1);
-  const clampedS2 = s2 === null ? null : Math.min(Math.max(s2, 0), maxS2);
-  const result = clampedS1 !== null && clampedS2 !== null ? scores[clampedS1][clampedS2] : null;
-  const resultDifficulty = clampedS1 !== null ? difficultyFor(section, clampedS1) : null;
+  const activeS1 = section === "Quant" ? quantS1 : verbalS1;
+  const activeS2 = section === "Quant" ? quantS2 : verbalS2;
+  const clampedS1 = activeS1 === null ? null : Math.min(Math.max(activeS1, 0), maxS1);
+  const clampedS2 = activeS2 === null ? null : Math.min(Math.max(activeS2, 0), maxS2);
 
   return (
     <AppShell>
@@ -302,7 +540,7 @@ export default function ScoreChartPage() {
             <button
               key={s}
               className={"pill" + (s === section ? " active" : "")}
-              onClick={() => { setSection(s); setS1(null); setS2(null); }}
+              onClick={() => setSection(s)}
             >
               {s}
             </button>
@@ -310,53 +548,25 @@ export default function ScoreChartPage() {
         </div>
       </div>
 
-      <div className="card" style={{ padding: 18, marginBottom: 20 }}>
-        <div style={{ ...eyebrow, marginBottom: 12 }}>Look up your score</div>
-        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
-              Correct in Section 1 (0-{maxS1})
-            </label>
-            <input
-              type="number"
-              min={0}
-              max={maxS1}
-              value={s1 ?? ""}
-              onChange={(e) => setS1(e.target.value === "" ? null : parseInt(e.target.value, 10))}
-              style={{ width: 90 }}
-            />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
-              Correct in Section 2 (0-{maxS2})
-            </label>
-            <input
-              type="number"
-              min={0}
-              max={maxS2}
-              value={s2 ?? ""}
-              onChange={(e) => setS2(e.target.value === "" ? null : parseInt(e.target.value, 10))}
-              style={{ width: 90 }}
-            />
-          </div>
-          <div style={{ flex: 1, minWidth: 140 }}>
-            {result !== null ? (
-              <div>
-                <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 2 }}>
-                  Scaled score
-                </div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                  <span className="mono" style={{ fontSize: 32, fontWeight: 700, color: "var(--amber)" }}>{result}</span>
-                  <span className="pill" style={{ background: DIFFICULTY_COLOR[resultDifficulty], color: "#0F1115", fontWeight: 700 }}>
-                    {resultDifficulty}
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div style={{ fontSize: 13, color: "var(--muted)" }}>Enter both values to see your scaled score.</div>
-            )}
-          </div>
-        </div>
+      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 20 }}>
+        <ScoreLookupCard
+          section="Quant"
+          color="var(--quant)"
+          scores={QUANT_SCORES}
+          s1={quantS1}
+          s2={quantS2}
+          onChangeS1={setQuantS1}
+          onChangeS2={setQuantS2}
+        />
+        <ScoreLookupCard
+          section="Verbal"
+          color="var(--verbal)"
+          scores={VERBAL_SCORES}
+          s1={verbalS1}
+          s2={verbalS2}
+          onChangeS1={setVerbalS1}
+          onChangeS2={setVerbalS2}
+        />
       </div>
 
       <div className="card" style={{ padding: 18, marginBottom: 20 }}>
@@ -367,15 +577,17 @@ export default function ScoreChartPage() {
       {testScores === null ? (
         <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 20 }}>Loading scores…</div>
       ) : testScores.length > 0 && (
-        <div className="card" style={{ padding: 18, marginBottom: 20 }}>
-          <div style={{ ...eyebrow, marginBottom: 12 }}>Score trend</div>
-          <ScoreTrendChart testScores={testScores} />
-          <div style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-            {[...testScores].reverse().map((s) => (
-              <ScoreRow key={s.id} score={s} onUpdate={handleUpdate} onDelete={handleDelete} />
-            ))}
+        <>
+          <ScoreDistributionSection testScores={testScores} />
+          <div className="card" style={{ padding: 18, marginBottom: 20 }}>
+            <div style={{ ...eyebrow, marginBottom: 12 }}>Logged scores</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {[...testScores].reverse().map((s) => (
+                <ScoreRow key={s.id} score={s} onUpdate={handleUpdate} onDelete={handleDelete} />
+              ))}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       <div className="card" style={{ padding: 18 }}>

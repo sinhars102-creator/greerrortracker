@@ -271,8 +271,12 @@ create table if not exists test_scores (
   quant_score int not null check (quant_score between 130 and 170),
   verbal_score int not null check (verbal_score between 130 and 170),
   notes text not null default '',
+  is_repeat boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+-- for installs that already ran the create table above before is_repeat existed
+alter table test_scores add column if not exists is_repeat boolean not null default false;
 
 alter table test_scores enable row level security;
 create policy "Users manage their own test scores"
