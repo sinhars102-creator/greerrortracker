@@ -172,15 +172,22 @@ function ScoreLookupCard({ section, color, scores, s1, s2, onChangeS1, onChangeS
   );
 }
 
+function computeMedian(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
 // Sample mean/standard deviation (n-1 denominator — these are a sample of
 // practice tests, not the full population of tests you'll ever take).
 function computeStats(values) {
   const n = values.length;
   if (n === 0) return null;
   const mean = values.reduce((a, b) => a + b, 0) / n;
-  if (n < 2) return { n, mean, sd: 0 };
+  const median = computeMedian(values);
+  if (n < 2) return { n, mean, median, sd: 0 };
   const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / (n - 1);
-  return { n, mean, sd: Math.sqrt(variance) };
+  return { n, mean, median, sd: Math.sqrt(variance) };
 }
 
 const round1 = (v) => Math.round(v * 10) / 10;
@@ -224,21 +231,28 @@ function DistributionChart({ label, color, values }) {
       </div>
     );
   }
-  const { mean, sd } = stats;
-  const { data, domainMin, domainMax } = buildBellCurve(mean, sd);
+  const { mean, median, sd } = stats;
+  const { data, domainMin: rawMin, domainMax: rawMax } = buildBellCurve(mean, sd);
+  // Widen the domain if the median (which can drift from mean on a skewed
+  // sample) would otherwise fall outside the mean-centered bell curve window.
+  const domainMin = Math.min(rawMin, median);
+  const domainMax = Math.max(rawMax, median);
   const markers = [
     { x: mean - 2 * sd, tag: "-2σ", value: round1(mean - 2 * sd), key: "m2" },
     { x: mean - sd, tag: "-1σ", value: round1(mean - sd), key: "m1" },
     { x: mean, tag: "Mean", value: round1(mean), key: "mean" },
     { x: mean + sd, tag: "+1σ", value: round1(mean + sd), key: "p1" },
     { x: mean + 2 * sd, tag: "+2σ", value: round1(mean + 2 * sd), key: "p2" },
+    { x: median, tag: "Median", value: round1(median), key: "median" },
   ];
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color }}>{label}</div>
-        <div className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>n={stats.n} · mean {round1(mean)} · σ {round1(sd)}</div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+          n={stats.n} · mean {round1(mean)} · median {round1(median)} · σ {round1(sd)}
+        </div>
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
         {markers.map((m) => (
@@ -249,9 +263,9 @@ function DistributionChart({ label, color, values }) {
               fontSize: 11,
               padding: "3px 8px",
               borderRadius: 5,
-              border: `1px solid ${m.key === "mean" ? color : "var(--border)"}`,
-              color: m.key === "mean" ? color : "var(--muted)",
-              fontWeight: m.key === "mean" ? 700 : 400,
+              border: `1px solid ${m.key === "mean" || m.key === "median" ? color : "var(--border)"}`,
+              color: m.key === "mean" || m.key === "median" ? color : "var(--muted)",
+              fontWeight: m.key === "mean" || m.key === "median" ? 700 : 400,
             }}
           >
             {m.tag} {m.value}
@@ -279,8 +293,8 @@ function DistributionChart({ label, color, values }) {
             <ReferenceLine
               key={m.key}
               x={m.x}
-              stroke={m.key === "mean" ? color : "var(--muted)"}
-              strokeDasharray={m.key === "mean" ? undefined : "4 3"}
+              stroke={m.key === "mean" || m.key === "median" ? color : "var(--muted)"}
+              strokeDasharray={m.key === "mean" ? undefined : m.key === "median" ? "2 2" : "4 3"}
             />
           ))}
         </AreaChart>

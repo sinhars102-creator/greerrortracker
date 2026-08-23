@@ -647,6 +647,7 @@ function ReviewPageInner() {
         onEdited={(patch) => patchEntry(current.id, patch)}
         onFinish={handleFinish}
         onSkip={handleSkip}
+        minAnswerSeconds={20}
       />
     </AppShell>
   );

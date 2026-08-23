@@ -54,7 +54,7 @@ function blanksAreUsable(blanks) {
  * (and so all state below resets to its initial value) whenever the
  * question changes, instead of manually resetting state in an effect.
  */
-export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtracted, onEdited, onFinish, onSkip }) {
+export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtracted, onEdited, onFinish, onSkip, minAnswerSeconds = 0 }) {
   const [imageUrl, setImageUrl] = useState(null);
   const cachedBlanksUsable = blanksAreUsable(entry.blanks);
   const [blanks, setBlanks] = useState(cachedBlanksUsable ? entry.blanks : null);
@@ -77,6 +77,18 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
 
   const [needsScreenshot, setNeedsScreenshot] = useState(false);
   const [uploadingScreenshot, setUploadingScreenshot] = useState(false);
+
+  // Forces at least minAnswerSeconds of reading time before "Check answer"
+  // can be pressed, for both Quant and Verbal (entry.section-agnostic —
+  // whichever section this question is, the same countdown applies).
+  // Counts down from mount, same lifetime as the rest of this component's
+  // state (fresh per question via the parent's key={entry.id} remount).
+  const [secondsLeft, setSecondsLeft] = useState(minAnswerSeconds);
+  useEffect(() => {
+    if (secondsLeft <= 0) return;
+    const t = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [secondsLeft]);
 
   const accent = entry.section === "Quant" ? "var(--quant)" : "var(--verbal)";
 
@@ -511,9 +523,14 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
       ))}
 
       {!checked && (
-        <div style={{ display: "flex", gap: 10 }}>
-          <button className="btn btn-primary" onClick={() => setChecked(true)} disabled={!allSelected}>Check answer</button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <button className="btn btn-primary" onClick={() => setChecked(true)} disabled={!allSelected || secondsLeft > 0}>
+            {secondsLeft > 0 ? `Check answer (${secondsLeft}s)` : "Check answer"}
+          </button>
           <button className="btn" onClick={onSkip}>Skip</button>
+          {secondsLeft > 0 && (
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>Take a moment to read the question first.</span>
+          )}
         </div>
       )}
       {checked && (
