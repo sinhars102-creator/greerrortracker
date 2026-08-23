@@ -81,14 +81,16 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
   // Forces at least minAnswerSeconds of reading time before "Check answer"
   // can be pressed, for both Quant and Verbal (entry.section-agnostic —
   // whichever section this question is, the same countdown applies).
-  // Counts down from mount, same lifetime as the rest of this component's
-  // state (fresh per question via the parent's key={entry.id} remount).
+  // Gated on loadingBlanks so the clock starts once the question is
+  // actually visible, not during the "Reading answer choices…" fetch —
+  // otherwise slow option extraction silently eats into the visible
+  // countdown and it reads short of the real minAnswerSeconds.
   const [secondsLeft, setSecondsLeft] = useState(minAnswerSeconds);
   useEffect(() => {
-    if (secondsLeft <= 0) return;
+    if (loadingBlanks || secondsLeft <= 0) return;
     const t = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
     return () => clearTimeout(t);
-  }, [secondsLeft]);
+  }, [secondsLeft, loadingBlanks]);
 
   const accent = entry.section === "Quant" ? "var(--quant)" : "var(--verbal)";
 
