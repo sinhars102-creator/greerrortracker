@@ -17,6 +17,7 @@ export default function LogPage() {
   const [imageDataUrl, setImageDataUrl] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
+  const [submitError, setSubmitError] = useState("");
   const [rcQuestions, setRcQuestions] = useState([]);
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const fileRef = useRef(null);
@@ -98,6 +99,7 @@ export default function LogPage() {
     if (!form.questionText.trim() && !imageDataUrl) return;
     setSubmitting(true);
     setSavedMsg("");
+    setSubmitError("");
 
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -106,19 +108,29 @@ export default function LogPage() {
     // 1. Create the entry immediately with whatever we have. Mistake types
     // stay empty until you classify it (on-demand, from All Entries) —
     // logging itself never needs AI unless there's a screenshot to read.
-    const entry = await createEntry({
-      section: form.section,
-      subtype: form.subtype,
-      questionText: form.questionText.trim() || (imageDataUrl ? "(transcribing…)" : ""),
-      passage: form.passage.trim(),
-      yourAnswer: form.yourAnswer,
-      correctAnswer: form.correctAnswer,
-      notes: form.notes,
-      tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
-      mistakeTypes: [],
-      hasImage: false, // set true once/if the upload succeeds
-      pending: needsExtraction,
-    }, user.id);
+    // Failures here must be caught and surfaced — this used to throw
+    // silently, leaving the button stuck on "Saving…" forever with no
+    // indication the entry was never actually created.
+    let entry;
+    try {
+      entry = await createEntry({
+        section: form.section,
+        subtype: form.subtype,
+        questionText: form.questionText.trim() || (imageDataUrl ? "(transcribing…)" : ""),
+        passage: form.passage.trim(),
+        yourAnswer: form.yourAnswer,
+        correctAnswer: form.correctAnswer,
+        notes: form.notes,
+        tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
+        mistakeTypes: [],
+        hasImage: false, // set true once/if the upload succeeds
+        pending: needsExtraction,
+      }, user.id);
+    } catch (e) {
+      setSubmitting(false);
+      setSubmitError(e.message ? `Couldn't save — ${e.message}` : "Couldn't save this entry. Please try again.");
+      return;
+    }
 
     const formSnapshot = { ...form };
     const imageSnapshot = imageDataUrl;
@@ -168,6 +180,7 @@ export default function LogPage() {
     if (rcQuestions.length === 0) return;
     setSubmitting(true);
     setSavedMsg("");
+    setSubmitError("");
 
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -179,32 +192,53 @@ export default function LogPage() {
 
     // 1. Create every entry immediately, marked pending — same "save first,
     // enrich later" pattern as the single-screenshot flow, just per question.
+    // A failure partway through must not be silent — surface what actually
+    // got saved vs. what didn't, rather than losing track of it.
     const created = [];
+    let batchError = null;
     for (let i = 0; i < questionsSnapshot.length; i++) {
       const q = questionsSnapshot[i];
-      const entry = await createEntry({
-        section: "Verbal",
-        subtype: "Reading Comprehension",
-        questionText: "(transcribing…)",
-        passage: sharedPassage,
-        yourAnswer: q.yourAnswer,
-        correctAnswer: q.correctAnswer,
-        notes: q.notes,
-        tags: [],
-        mistakeTypes: [],
-        hasImage: false,
-        pending: true,
-        rcGroupId,
-        rcGroupOrder: i,
-      }, user.id);
-      created.push({ entry, q });
+      try {
+        const entry = await createEntry({
+          section: "Verbal",
+          subtype: "Reading Comprehension",
+          questionText: "(transcribing…)",
+          passage: sharedPassage,
+          yourAnswer: q.yourAnswer,
+          correctAnswer: q.correctAnswer,
+          notes: q.notes,
+          tags: [],
+          mistakeTypes: [],
+          hasImage: false,
+          pending: true,
+          rcGroupId,
+          rcGroupOrder: i,
+        }, user.id);
+        created.push({ entry, q });
+      } catch (e) {
+        batchError = e;
+        break;
+      }
     }
 
-    setRcQuestions([]);
-    setForm((f) => ({ ...f, passage: "" }));
     setSubmitting(false);
-    setSavedMsg(`Logged ${created.length} mistake${created.length > 1 ? "s" : ""} — reading screenshots in the background.`);
-    setTimeout(() => setSavedMsg(""), 4000);
+    if (batchError) {
+      const savedCount = created.length;
+      setSubmitError(
+        savedCount > 0
+          ? `Saved ${savedCount} of ${questionsSnapshot.length} — then failed: ${batchError.message || "unknown error"}. The rest were not saved; retry them.`
+          : `Couldn't save — ${batchError.message || "unknown error"}. Nothing in this batch was saved.`
+      );
+      // Only drop the questions that actually made it in, so the ones that
+      // failed stay in the form to retry instead of being silently lost.
+      setRcQuestions((prev) => prev.filter((q) => !created.some((c) => c.q.localId === q.localId)));
+      if (created.length === 0) return;
+    } else {
+      setRcQuestions([]);
+      setForm((f) => ({ ...f, passage: "" }));
+      setSavedMsg(`Logged ${created.length} mistake${created.length > 1 ? "s" : ""} — reading screenshots in the background.`);
+      setTimeout(() => setSavedMsg(""), 4000);
+    }
 
     // 2 & 3. Upload + extract each question's text independently and concurrently.
     created.forEach(({ entry, q }) => {
@@ -330,6 +364,7 @@ export default function LogPage() {
                 {submitting ? "Saving…" : `Log ${rcQuestions.length || ""} mistake${rcQuestions.length === 1 ? "" : "s"}`}
               </button>
               {savedMsg && <span style={{ fontSize: 12, color: "var(--sage)" }}>{savedMsg}</span>}
+              {submitError && <span style={{ fontSize: 12, color: "var(--red)" }}>{submitError}</span>}
             </div>
           </>
         ) : (
@@ -390,6 +425,7 @@ export default function LogPage() {
                 {submitting ? "Saving…" : "Log mistake"}
               </button>
               {savedMsg && <span style={{ fontSize: 12, color: "var(--sage)" }}>{savedMsg}</span>}
+              {submitError && <span style={{ fontSize: 12, color: "var(--red)" }}>{submitError}</span>}
             </div>
           </>
         )}
