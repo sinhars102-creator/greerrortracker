@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import QuestionCard from "@/components/QuestionCard";
 import { listEntries, updateEntry, groupForSequentialPractice } from "@/lib/entries";
-import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, filterLoggedSinceDate, filterPriorityMix, RECENT_DAYS } from "@/lib/practiceFilters";
+import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, filterPriorityMix, filterDateRange, RECENT_DAYS } from "@/lib/practiceFilters";
 
 const MISTAKE_THRESHOLD_OPTIONS = [0, 1, 2, 3, 4, 5, 7, 10];
 const PRIORITY_MIX_COUNT_OPTIONS = [10, 20, 30, 40, 50, 75, 100];
@@ -48,6 +48,14 @@ function parseSourceFromParams(params) {
   if (type === "loggedSince") {
     const date = params.get("date");
     return /^\d{4}-\d{2}-\d{2}$/.test(date || "") ? { type, date } : null;
+  }
+  if (type === "dateRange") {
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+    const from = params.get("from");
+    const to = params.get("to");
+    const validFrom = dateRe.test(from || "") ? from : null;
+    const validTo = dateRe.test(to || "") ? to : null;
+    return validFrom || validTo ? { type, from: validFrom, to: validTo } : null;
   }
   if (type === "subtype") {
     const subtype = params.get("subtype");
@@ -136,6 +144,12 @@ function describeSource(source) {
   if (source.type === "subtype") return source.subtype;
   if (source.type === "loggedSince") return `Logged since ${source.date}`;
   if (source.type === "priorityMix") return `Priority set (${source.limit})`;
+  if (source.type === "dateRange") {
+    if (source.from && source.to) return `Logged ${source.from} to ${source.to}`;
+    if (source.from) return `Logged from ${source.from}`;
+    if (source.to) return `Logged up to ${source.to}`;
+    return "Review session";
+  }
   return "Review session";
 }
 
@@ -158,10 +172,11 @@ function saveLastSection(section) {
   try { localStorage.setItem(lastSectionKey(), section); } catch {}
 }
 
-// The "Logged since" date picker lives on the setup screen, before any
-// session has started — remembered separately so picking a date and then
-// refreshing (without yet clicking Start) doesn't lose the pick.
+// The "Logged between" From/To date pickers live on the setup screen,
+// before any session has started — remembered separately so picking a date
+// and then refreshing (without yet clicking Start) doesn't lose the pick.
 function loggedSinceKey(section) { return `review_logged_since_${section}`; }
+function loggedToKey(section) { return `review_logged_to_${section}`; }
 function loadLoggedSinceDate(section) {
   if (typeof window === "undefined") return null;
   try { return localStorage.getItem(loggedSinceKey(section)) || null; } catch { return null; }
@@ -171,6 +186,17 @@ function saveLoggedSinceDate(section, date) {
   try {
     if (date) localStorage.setItem(loggedSinceKey(section), date);
     else localStorage.removeItem(loggedSinceKey(section));
+  } catch { /* storage full/unavailable — pick just won't be remembered */ }
+}
+function loadLoggedToDate(section) {
+  if (typeof window === "undefined") return null;
+  try { return localStorage.getItem(loggedToKey(section)) || null; } catch { return null; }
+}
+function saveLoggedToDate(section, date) {
+  if (typeof window === "undefined") return;
+  try {
+    if (date) localStorage.setItem(loggedToKey(section), date);
+    else localStorage.removeItem(loggedToKey(section));
   } catch { /* storage full/unavailable — pick just won't be remembered */ }
 }
 
@@ -210,7 +236,9 @@ function ReviewPageInner() {
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
   const [priorityMixCount, setPriorityMixCount] = useState(40);
   const [loggedSinceDate, setLoggedSinceDate] = useState(() => loadLoggedSinceDate(initial.section));
+  const [loggedToDate, setLoggedToDate] = useState(() => loadLoggedToDate(initial.section));
   const dateInputRef = useRef(null);
+  const toDateInputRef = useRef(null);
   // Bumped after an explicit "Discard" so the paused-session banner
   // recomputes — localStorage writes alone don't trigger a re-render.
   const [pausedVersion, setPausedVersion] = useState(0);
@@ -231,14 +259,16 @@ function ReviewPageInner() {
 
   useEffect(() => { saveLastSection(section); }, [section]);
   useEffect(() => { saveLoggedSinceDate(section, loggedSinceDate); }, [section, loggedSinceDate]);
+  useEffect(() => { saveLoggedToDate(section, loggedToDate); }, [section, loggedToDate]);
 
-  // Each section remembers its own "logged since" pick and its own active
+  // Each section remembers its own "logged between" pick and its own active
   // session — switching sections auto-resumes whatever was LIVE there (not
   // explicitly paused), same as a plain refresh would. Anything explicitly
   // paused shows up in that section's resume list instead.
   const switchSection = (s) => {
     setSection(s);
     setLoggedSinceDate(loadLoggedSinceDate(s));
+    setLoggedToDate(loadLoggedToDate(s));
     const activeSource = loadActiveSource(s);
     const saved = activeSource ? loadSessionFor(s, activeSource) : null;
     setSource(saved ? saved.source : null);
@@ -259,14 +289,15 @@ function ReviewPageInner() {
   }, [section, source, started, answeredIds, skippedIds]);
 
   const bySection = useMemo(() => (entries || []).filter((e) => e.section === section && !e.pending), [entries, section]);
-  // When a "logged since" date is picked, every number in the tier-wise
-  // section (tiers, subtype breakdown, mistake-threshold count) scopes down
-  // to just entries logged on/after it — same convention as Dashboard's
-  // Window selector scoping its stats. Unset (null) means no scoping, the
-  // original full pool.
+  // When a From and/or To date is picked, every number in the tier-wise
+  // section (tiers, subtype breakdown, mistake-threshold count, Priority
+  // Set) scopes down to just entries logged in that range — same
+  // convention as Dashboard's Window selector scoping its stats. Both
+  // unset means no scoping, the original full pool; either bound alone is
+  // open-ended on the other side.
   const scopedBySection = useMemo(
-    () => (loggedSinceDate ? filterLoggedSinceDate(bySection, loggedSinceDate) : bySection),
-    [bySection, loggedSinceDate]
+    () => (loggedSinceDate || loggedToDate ? filterDateRange(bySection, loggedSinceDate, loggedToDate) : bySection),
+    [bySection, loggedSinceDate, loggedToDate]
   );
   const tiers = useMemo(() => buildTiers(scopedBySection), [scopedBySection]);
   const tierAttemptStats = useMemo(() => {
@@ -434,31 +465,59 @@ function ReviewPageInner() {
                 <button key={s} className={"pill" + (s === section ? " active" : "")} onClick={() => { switchSection(s); setMode(null); }}>{s}</button>
               ))}
             </div>
-            <div
-              onClick={() => { try { dateInputRef.current?.showPicker?.(); } catch { /* unsupported browser — native click still works */ } }}
-              style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--muted)", cursor: "pointer" }}
-            >
-              <span>Logged since</span>
-              <input
-                ref={dateInputRef}
-                type="date"
-                value={loggedSinceDate || ""}
-                max={todayISO()}
-                onChange={(e) => setLoggedSinceDate(e.target.value || null)}
-                onClick={(e) => e.stopPropagation()}
-                style={{ width: "auto", cursor: "pointer" }}
-              />
-              <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: loggedSinceDate ? "var(--amber)" : "var(--muted)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--muted)", flexWrap: "wrap" }}>
+              <span>Logged</span>
+              <div
+                onClick={() => { try { dateInputRef.current?.showPicker?.(); } catch { /* unsupported browser — native click still works */ } }}
+                style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+              >
+                <span>from</span>
+                <input
+                  ref={dateInputRef}
+                  type="date"
+                  value={loggedSinceDate || ""}
+                  max={loggedToDate || todayISO()}
+                  onChange={(e) => setLoggedSinceDate(e.target.value || null)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ width: "auto", cursor: "pointer" }}
+                />
+              </div>
+              <div
+                onClick={() => { try { toDateInputRef.current?.showPicker?.(); } catch { /* unsupported browser — native click still works */ } }}
+                style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+              >
+                <span>to</span>
+                <input
+                  ref={toDateInputRef}
+                  type="date"
+                  value={loggedToDate || ""}
+                  min={loggedSinceDate || undefined}
+                  max={todayISO()}
+                  onChange={(e) => setLoggedToDate(e.target.value || null)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ width: "auto", cursor: "pointer" }}
+                />
+              </div>
+              <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: (loggedSinceDate || loggedToDate) ? "var(--amber)" : "var(--muted)" }}>
                 {loggedSinceCount}
               </span>
               <button
                 className="btn"
                 style={{ fontSize: 11.5, padding: "5px 10px" }}
-                disabled={!loggedSinceDate}
-                onClick={(e) => { e.stopPropagation(); loggedSinceDate && startWithSource({ type: "loggedSince", date: loggedSinceDate }); }}
+                disabled={!loggedSinceDate && !loggedToDate}
+                onClick={() => (loggedSinceDate || loggedToDate) && startWithSource({ type: "dateRange", from: loggedSinceDate || null, to: loggedToDate || null })}
               >
                 Start
               </button>
+              {(loggedSinceDate || loggedToDate) && (
+                <button
+                  className="btn"
+                  style={{ fontSize: 11.5, padding: "5px 10px" }}
+                  onClick={() => { setLoggedSinceDate(null); setLoggedToDate(null); }}
+                >
+                  Clear
+                </button>
+              )}
             </div>
           </div>
 
