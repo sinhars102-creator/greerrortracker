@@ -16,37 +16,23 @@ const BUCKET_INFO = {
   learning: { label: "Learning", color: "var(--red)", bg: "rgba(193,85,75,0.15)" },
 };
 
-// Flat spaced-repetition intervals, in days, before a word is due again —
-// once a word leaves the first-week daily cram (see isDue below), it comes
-// back on a fixed cadence per bucket rather than stretching out further.
-const BASE_INTERVAL_DAYS = { learning: 2, revise: 3, learnt: 3 };
+// Spaced-repetition intervals, in days, before a word is due again.
+// "Learnt" words stretch out further each time they're confirmed correct in a row.
+const BASE_INTERVAL_DAYS = { learning: 2, revise: 3, learnt: 6 };
 
-function computeNextDue(bucket) {
-  const days = BASE_INTERVAL_DAYS[bucket] || 1;
+function computeNextDue(bucket, streak) {
+  const base = BASE_INTERVAL_DAYS[bucket] || 1;
+  let days = base;
+  if (bucket === "learnt") {
+    days = Math.min(45, base * Math.pow(1.7, Math.max(0, streak - 1)));
+  }
   const d = new Date();
-  d.setDate(d.getDate() + days);
+  d.setDate(d.getDate() + Math.max(1, Math.round(days)));
   return d.toISOString();
 }
 
-// Base words have no add date of their own (static list, not something you
-// "added") — treat them as always past the 7-day window so this cram
-// behavior only ever applies to words you've actually added yourself.
-function daysSinceAdded(word) {
-  if (!word || !word.createdAt) return Infinity;
-  return (Date.now() - new Date(word.createdAt).getTime()) / 86400000;
-}
-
-// A word added within the last 7 days is due every day, no matter its
-// bucket — hammer new vocabulary daily during its first week. From day 8
-// on, it keeps coming daily only while still in "learning" (including
-// never-reviewed words, which have no bucket yet); once it reaches
-// "revise" or "learnt" it graduates off the daily list and falls back to
-// its own bucket's flat interval instead.
-function isDue(word, entry) {
-  if (daysSinceAdded(word) < 7) return true;
-  const bucket = entry?.bucket;
-  if (!bucket || bucket === "learning") return true;
-  if (!entry.nextDueAt) return true;
+function isDue(entry) {
+  if (!entry || !entry.nextDueAt) return true;
   return new Date(entry.nextDueAt).getTime() <= Date.now();
 }
 
@@ -143,7 +129,7 @@ function VocabReviewPageInner() {
         setUserId(user.id);
         const [prog, custom, savedGroups, hidden] = await Promise.all([listVocabProgress(), listCustomVocabWords(), listVocabGroups(), listHiddenVocabWords()]);
         setProgress(prog);
-        setCustomWords(custom.map((c) => ({ id: c.id, w: c.w, m: c.m, createdAt: c.createdAt })));
+        setCustomWords(custom.map((c) => ({ id: c.id, w: c.w, m: c.m })));
         setGroups(savedGroups);
         setHiddenWords(new Set(hidden));
       } catch (e) {
@@ -338,7 +324,7 @@ function VocabReviewPageInner() {
 
   function loadDue() {
     setError("");
-    const due = allWords.filter((x) => isDue(x, progress[x.w]));
+    const due = allWords.filter((x) => isDue(progress[x.w]));
     if (due.length === 0) {
       setError("Nothing is due yet. Load all to review ahead of schedule.");
       return;
@@ -437,7 +423,7 @@ function VocabReviewPageInner() {
       streak,
       reviewCount,
       lastReviewed: new Date().toISOString(),
-      nextDueAt: computeNextDue(bucket),
+      nextDueAt: computeNextDue(bucket, streak),
       hook: grade && grade.hook ? grade.hook : prevEntry ? prevEntry.hook : "",
     };
     await upsertVocabProgress(userId, current.w, entry).catch(() => {});
@@ -556,7 +542,7 @@ function VocabReviewPageInner() {
   Object.values(progress).forEach((p) => {
     if (bucketCounts[p.bucket] !== undefined) bucketCounts[p.bucket]++;
   });
-  const dueNowCount = allWords.filter((x) => isDue(x, progress[x.w])).length;
+  const dueNowCount = allWords.filter((x) => isDue(progress[x.w])).length;
 
   if (!loaded) return <AppShell><div style={{ color: "var(--muted)" }}>Loading…</div></AppShell>;
   if (loadError) {
