@@ -8,6 +8,11 @@ import { EXTRACTION_VERSION } from "@/lib/extractionVersion";
 
 const letter = (i) => String.fromCharCode(65 + i);
 
+// Mirrors app/log/page.js's own copy — duplicated rather than imported so
+// this client component doesn't need to reach into that page's module.
+const QUANT_SUBTYPES = ["Arithmetic", "Algebra", "Geometry", "Number Properties", "Word Problems", "Data Interpretation", "Probability & Combinatorics", "Quantitative Comparison"];
+const VERBAL_SUBTYPES = ["Sentence Equivalence", "Text Completion", "Reading Comprehension", "Vocabulary"];
+
 function evalFraction(s) {
   const parts = s.split("/");
   if (parts.length !== 2) return NaN;
@@ -71,6 +76,8 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
   const [solutionError, setSolutionError] = useState("");
 
   const [editing, setEditing] = useState(false);
+  const [editSection, setEditSection] = useState(entry.section);
+  const [editSubtype, setEditSubtype] = useState(entry.subtype);
   const [editQuestionText, setEditQuestionText] = useState(entry.questionText || "");
   const [editPassage, setEditPassage] = useState(entry.passage || "");
   const [editBlanks, setEditBlanks] = useState(null);
@@ -224,6 +231,8 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
   };
 
   const startEdit = () => {
+    setEditSection(entry.section);
+    setEditSubtype(entry.subtype);
     setEditQuestionText(entry.questionText || "");
     setEditPassage(entry.passage || "");
     setEditBlanks(blanks.map((b) => ({ ...b, options: [...b.options], correctIndices: [...(b.correctIndices || [])] })));
@@ -231,6 +240,14 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
   };
 
   const cancelEdit = () => setEditing(false);
+
+  // Switching section changes which subtypes are even valid — reset to
+  // that section's first subtype rather than leaving a mismatched one
+  // (e.g. "Sentence Equivalence" on a Quant question) selected.
+  const switchEditSection = (s) => {
+    setEditSection(s);
+    setEditSubtype(s === "Quant" ? QUANT_SUBTYPES[0] : VERBAL_SUBTYPES[0]);
+  };
 
   const updateOptionText = (bi, i, text) => {
     setEditBlanks((prev) => prev.map((b, idx) => (idx !== bi ? b : { ...b, options: b.options.map((o, oi) => (oi === i ? text : o)) })));
@@ -272,7 +289,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
   };
 
   const toggleEditCorrect = (bi, i) => {
-    const isSentenceEquivalence = entry.subtype === "Sentence Equivalence";
+    const isSentenceEquivalence = editSubtype === "Sentence Equivalence";
     setEditBlanks((prev) => prev.map((b, idx) => {
       if (idx !== bi) return b;
       const cur = b.correctIndices || [];
@@ -285,7 +302,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
   };
 
   const saveEdit = () => {
-    const patch = { questionText: editQuestionText, passage: editPassage, blanks: editBlanks };
+    const patch = { section: editSection, subtype: editSubtype, questionText: editQuestionText, passage: editPassage, blanks: editBlanks };
     setBlanks(editBlanks);
     onEdited?.(patch);
     setEditing(false);
@@ -358,16 +375,39 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
 
   if (editing) {
     return (
-      <div className="card" style={{ padding: 18, borderLeft: `3px solid ${accent}` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ display: "flex", gap: 8 }}>
-            <span className="pill" style={{ background: accent, color: "#0F1115" }}>{entry.section}</span>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>{entry.subtype}</span>
+      <div className="card" style={{ padding: 18, borderLeft: `3px solid ${editSection === "Quant" ? "var(--quant)" : "var(--verbal)"}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {["Quant", "Verbal"].map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => switchEditSection(s)}
+                className="pill"
+                style={{
+                  cursor: "pointer",
+                  border: "none",
+                  background: editSection === s ? (s === "Quant" ? "var(--quant)" : "var(--verbal)") : "var(--panel2)",
+                  color: editSection === s ? "#0F1115" : "var(--muted)",
+                }}
+              >
+                {s}
+              </button>
+            ))}
+            <select
+              value={editSubtype}
+              onChange={(e) => setEditSubtype(e.target.value)}
+              style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }}
+            >
+              {(editSection === "Quant" ? QUANT_SUBTYPES : VERBAL_SUBTYPES).map((st) => (
+                <option key={st} value={st}>{st}</option>
+              ))}
+            </select>
           </div>
           <span style={{ fontSize: 11, color: "var(--amber)", textTransform: "uppercase", letterSpacing: ".04em" }}>Editing</span>
         </div>
 
-        {(entry.subtype === "Reading Comprehension" || editPassage) && (
+        {(editSubtype === "Reading Comprehension" || editPassage) && (
           <div style={{ marginBottom: 14 }}>
             <label>Passage</label>
             <textarea rows={6} value={editPassage} onChange={(e) => setEditPassage(e.target.value)} />
@@ -390,7 +430,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
             ) : (
               <>
                 <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>Edit option text, and click to mark which one(s) are correct.</div>
-                {entry.subtype !== "Sentence Equivalence" && (
+                {editSubtype !== "Sentence Equivalence" && (
                   <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 12.5, color: "var(--muted)", cursor: "pointer", textTransform: "none" }}>
                     <input type="checkbox" checked={!!b.multiSelect} onChange={() => toggleEditMultiSelect(bi)} style={{ width: "auto" }} />
                     Select all that apply (more than one correct answer) — unchecking clears current marks
