@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Star } from "lucide-react";
-import { getScreenshotUrl, uploadScreenshot, compressImageDataUrl, dataUrlToBlobAndParts } from "@/lib/entries";
+import { getScreenshotUrlCached, uploadScreenshot, compressImageDataUrl, dataUrlToBlobAndParts } from "@/lib/entries";
 import { createClient } from "@/lib/supabase/client";
-import { EXTRACTION_VERSION } from "@/lib/extractionVersion";
+import { blanksAreUsable } from "@/lib/extractionVersion";
 
 const letter = (i) => String.fromCharCode(65 + i);
 
@@ -32,21 +32,6 @@ function numericAnswersMatch(userInput, correctValue) {
   const na = Number(a.includes("/") ? evalFraction(a) : a);
   const nc = Number(c.includes("/") ? evalFraction(c) : c);
   return !Number.isNaN(na) && !Number.isNaN(nc) && Math.abs(na - nc) < 1e-9;
-}
-
-// Guards against stale cached `entry.blanks` from before numeric-entry
-// support existed (or any other malformed shape) — a blank with neither 2+
-// options nor a numericAnswer renders no interactive control at all, so
-// treat it as unusable and fall through to a fresh extraction instead of
-// trusting whatever's cached. Also rejects blanks extracted under an older
-// EXTRACTION_VERSION (e.g. before the "trust the recorded answer" prompt
-// fix) so a bad cached grading gets silently re-extracted and corrected
-// instead of staying wrong forever.
-function blanksAreUsable(blanks) {
-  return Array.isArray(blanks) && blanks.length > 0 && blanks.every((b) => (
-    b._v === EXTRACTION_VERSION
-    && ((Array.isArray(b.options) && b.options.length >= 2) || (typeof b.numericAnswer === "string" && b.numericAnswer.trim()))
-  ));
 }
 
 /**
@@ -108,7 +93,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
     try {
       let signedUrl = signedUrlOverride;
       if (signedUrl === undefined && entry.hasImage && entry.imagePath) {
-        signedUrl = await getScreenshotUrl(entry.imagePath).catch(() => null);
+        signedUrl = await getScreenshotUrlCached(entry.imagePath).catch(() => null);
       }
       const res = await fetch("/api/extract-options", {
         method: "POST",
@@ -145,7 +130,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
       const compressed = await compressImageDataUrl(dataUrl, 1600, 0.85);
       const parts = dataUrlToBlobAndParts(compressed);
       const path = await uploadScreenshot(user.id, entry.id, parts.blob);
-      const signedUrl = await getScreenshotUrl(path);
+      const signedUrl = await getScreenshotUrlCached(path);
       onEdited?.({ hasImage: true, imagePath: path });
       setImageUrl(signedUrl);
       await extractOptions(signedUrl);
@@ -158,7 +143,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
 
   useEffect(() => {
     if (entry.hasImage && entry.imagePath) {
-      getScreenshotUrl(entry.imagePath).then(setImageUrl).catch(() => {});
+      getScreenshotUrlCached(entry.imagePath).then(setImageUrl).catch(() => {});
     }
     // Kicks off an async fetch; the setState calls inside it report the
     // fetch's progress, not a synchronous render-time state sync.

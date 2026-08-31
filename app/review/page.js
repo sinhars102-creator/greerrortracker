@@ -4,8 +4,9 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import QuestionCard from "@/components/QuestionCard";
-import { listEntries, updateEntry, groupForSequentialPractice } from "@/lib/entries";
+import { listEntries, updateEntry, groupForSequentialPractice, getScreenshotUrlCached } from "@/lib/entries";
 import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, filterPriorityMix, filterDateRange, RECENT_DAYS } from "@/lib/practiceFilters";
+import { blanksAreUsable } from "@/lib/extractionVersion";
 
 const MISTAKE_THRESHOLD_OPTIONS = [0, 1, 2, 3, 4, 5, 7, 10];
 const PRIORITY_MIX_COUNT_OPTIONS = [10, 20, 30, 40, 50, 75, 100];
@@ -360,6 +361,50 @@ function ReviewPageInner() {
     updateEntry(id, patch).catch(() => {});
     setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
   };
+
+  // Prefetch the next several questions' screenshot URLs and, for any
+  // whose cached extraction is missing or stale, their answer options —
+  // while the current one is still on screen. Review already enforces a
+  // minimum reading time per question, so this overlaps real dead time
+  // with what would otherwise be a live round-trip (signed-URL fetch, or
+  // a full AI extraction call) each time "Next" is clicked, which is what
+  // made moving between questions feel slow. Done one at a time (not all
+  // at once) so it naturally spreads across the reading window instead of
+  // bursting several AI calls simultaneously; each one still lands well
+  // before you'd reach it at normal reading pace.
+  const PREFETCH_AHEAD = 5;
+  const upcoming = remaining.slice(1, 1 + PREFETCH_AHEAD);
+  const upcomingKey = upcoming.map((e) => e.id).join(",");
+  useEffect(() => {
+    if (upcoming.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const entry of upcoming) {
+        if (cancelled) return;
+        let imageUrl = null;
+        if (entry.hasImage && entry.imagePath) {
+          imageUrl = await getScreenshotUrlCached(entry.imagePath).catch(() => null);
+        }
+        if (cancelled || blanksAreUsable(entry.blanks)) continue;
+        try {
+          const res = await fetch("/api/extract-options", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entry, image: null, imageUrl }),
+          });
+          if (cancelled || !res.ok) continue;
+          const data = await res.json();
+          if (data.blanks) patchEntry(entry.id, { blanks: data.blanks });
+        } catch {
+          // Silent — this is only a warm-up. QuestionCard retries for
+          // real (with its own visible loading/error state) once you
+          // actually get there.
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upcomingKey]);
 
   const handleFinish = async ({ correct }) => {
     const totalAttempts = (current.totalAttempts || 0) + 1;
