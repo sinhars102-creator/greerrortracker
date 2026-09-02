@@ -283,6 +283,31 @@ create policy "Users manage their own test scores"
   on test_scores for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ============================================================
+-- ESSAYS (app/essay) — GRE Analytical Writing practice: a pasted prompt,
+-- the written response, an AI-graded score (0-6, 0.5 increments, matching
+-- the real GRE scale) plus written feedback, and a structured outline
+-- (jsonb) rendered as a box diagram to guide a rewrite.
+-- ============================================================
+create table if not exists essays (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  task_type text not null check (task_type in ('Issue', 'Argument')),
+  prompt text not null,
+  essay_text text not null,
+  score numeric,
+  score_summary text not null default '',
+  feedback text not null default '',
+  structure jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists essays_user_id_idx on essays(user_id);
+
+alter table essays enable row level security;
+create policy "Users manage their own essays"
+  on essays for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ============================================================
 -- updated_at auto-touch trigger for entries
 -- ============================================================
 create or replace function touch_updated_at()

@@ -22,6 +22,7 @@ const TABS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/review", label: "Review" },
   { href: "/entries", label: "All Entries" },
+  { href: "/essay", label: "Essay" },
 ];
 
 const DROPDOWNS = [
