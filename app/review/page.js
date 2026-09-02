@@ -378,6 +378,11 @@ function ReviewPageInner() {
     : current;
   const canGoBack = backSteps < passedIds.length;
   const handlePrevious = () => { if (canGoBack) setBackSteps((b) => b + 1); };
+  // Dedicated forward control while looking back — separate from
+  // QuestionCard's own Skip/Next-question buttons, whose labels don't fit
+  // "move toward live" (clicking "Skip" to leave a question you already
+  // answered reads as skipping it for real, which it isn't).
+  const handleNext = () => { if (backSteps > 0) setBackSteps((b) => Math.max(0, b - 1)); };
 
   const handleSkip = () => {
     setSkippedIds((prev) => new Set(prev).add(current.id));
@@ -804,6 +809,15 @@ function ReviewPageInner() {
           >
             ← Previous
           </button>
+          {backSteps > 0 && (
+            <button
+              className="btn"
+              onClick={handleNext}
+              style={{ fontSize: 13, padding: "6px 12px" }}
+            >
+              Next →
+            </button>
+          )}
         </div>
         <button
           className="btn"
@@ -816,7 +830,7 @@ function ReviewPageInner() {
       </div>
       {backSteps > 0 && (
         <div style={{ fontSize: 12.5, color: "var(--amber)", marginBottom: 10 }}>
-          Reviewing a previous question — checking or skipping here does not count as a new attempt, it just moves back toward where you left off.
+          Reviewing a previous question — use Next above to return to where you left off. Checking or skipping here does not count as a new attempt.
         </div>
       )}
       <QuestionCard
