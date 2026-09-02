@@ -69,6 +69,12 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
 
   const [needsScreenshot, setNeedsScreenshot] = useState(false);
   const [uploadingScreenshot, setUploadingScreenshot] = useState(false);
+  // Distinct from needsScreenshot: this is a screenshot the app knows
+  // about (hasImage/imagePath set, extraction already succeeded from it)
+  // whose actual image file fails to load in the browser — e.g. deleted
+  // from storage, or a path mismatch. Previously this silently rendered
+  // as a broken image icon with no indication anything was wrong.
+  const [imageLoadFailed, setImageLoadFailed] = useState(false);
 
   // Forces at least minAnswerSeconds of reading time before "Check answer"
   // can be pressed, for both Quant and Verbal (entry.section-agnostic —
@@ -133,6 +139,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
       const signedUrl = await getScreenshotUrlCached(path);
       onEdited?.({ hasImage: true, imagePath: path });
       setImageUrl(signedUrl);
+      setImageLoadFailed(false);
       await extractOptions(signedUrl);
     } catch (e) {
       setError(e.message || "Couldn't attach screenshot");
@@ -157,7 +164,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
   // Lets a copied screenshot (Ctrl+V) attach directly, instead of requiring
   // a save-to-disk-then-upload round trip through the file picker.
   useEffect(() => {
-    if (!needsScreenshot) return;
+    if (!needsScreenshot && !imageLoadFailed) return;
     const handlePaste = (e) => {
       const item = Array.from(e.clipboardData?.items || []).find((i) => i.type.startsWith("image/"));
       const file = item?.getAsFile();
@@ -166,7 +173,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
     window.addEventListener("paste", handlePaste);
     return () => window.removeEventListener("paste", handlePaste);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsScreenshot]);
+  }, [needsScreenshot, imageLoadFailed]);
 
   // Sentence Equivalence is always exactly 2. "Select all that apply" /
   // checkbox questions (b.multiSelect) allow any number, at least 1 — fall
@@ -494,8 +501,29 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
         </div>
       )}
 
-      {imageUrl ? (
-        <img src={imageUrl} alt="Question" style={{ maxWidth: "100%", borderRadius: 5, marginBottom: 12 }} />
+      {imageUrl && !imageLoadFailed ? (
+        <img
+          src={imageUrl}
+          alt="Question"
+          style={{ maxWidth: "100%", borderRadius: 5, marginBottom: 12 }}
+          onError={() => setImageLoadFailed(true)}
+        />
+      ) : imageLoadFailed ? (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 13, color: "var(--red)", marginBottom: 8 }}>
+            This question&apos;s screenshot failed to load (the stored image may be missing) — the options below were extracted before, so you can still answer, but you&apos;re missing the visual context.
+          </div>
+          <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
+            Paste (Ctrl+V) a replacement screenshot, or choose a file:
+          </label>
+          <input
+            type="file"
+            accept="image/*"
+            disabled={uploadingScreenshot}
+            onChange={(e) => retryWithScreenshot(e.target.files?.[0])}
+          />
+          {uploadingScreenshot && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>Uploading &amp; reattaching…</div>}
+        </div>
       ) : (
         <div style={{ fontSize: 14.5, marginBottom: 14, whiteSpace: "pre-wrap" }}>{entry.questionText}</div>
       )}

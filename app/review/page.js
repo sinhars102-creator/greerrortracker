@@ -234,6 +234,13 @@ function ReviewPageInner() {
   const [started, setStarted] = useState(initial.started);
   const [skippedIds, setSkippedIds] = useState(initial.skippedIds);
   const [answeredIds, setAnsweredIds] = useState(initial.answeredIds);
+  // Ordered history of entry ids that have left `remaining` this session
+  // (answered or skipped), oldest first — powers the "Previous" button.
+  // Session-only, not persisted across pause/resume/refresh.
+  const [passedIds, setPassedIds] = useState([]);
+  // 0 = viewing the live front of the queue. N>0 = looking back N steps
+  // into passedIds instead.
+  const [backSteps, setBackSteps] = useState(0);
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
   const [priorityMixCount, setPriorityMixCount] = useState(40);
   const [loggedSinceDate, setLoggedSinceDate] = useState(() => loadLoggedSinceDate(initial.section));
@@ -275,6 +282,8 @@ function ReviewPageInner() {
     setSource(saved ? saved.source : null);
     setAnsweredIds(new Set(saved ? saved.answeredIds : []));
     setSkippedIds(new Set(saved ? saved.skippedIds : []));
+    setPassedIds([]);
+    setBackSteps(0);
     setStarted(!!saved);
     setMode(null);
   };
@@ -355,7 +364,19 @@ function ReviewPageInner() {
     }
   }, [started, entries, current, skippedIds.size, section, source]);
 
-  const handleSkip = () => setSkippedIds((prev) => new Set(prev).add(current.id));
+  // "Previous" steps back through passedIds instead of the live front of
+  // the queue. Looking up by id in `entries` (not `remaining`, which has
+  // already filtered it out) — it's still there, just answered/skipped.
+  const viewingEntry = backSteps > 0
+    ? (entries || []).find((e) => e.id === passedIds[passedIds.length - backSteps]) || current
+    : current;
+  const canGoBack = backSteps < passedIds.length;
+  const handlePrevious = () => { if (canGoBack) setBackSteps((b) => b + 1); };
+
+  const handleSkip = () => {
+    setSkippedIds((prev) => new Set(prev).add(current.id));
+    setPassedIds((prev) => [...prev, current.id]);
+  };
 
   const patchEntry = (id, patch) => {
     updateEntry(id, patch).catch(() => {});
@@ -421,8 +442,15 @@ function ReviewPageInner() {
 
     await updateEntry(current.id, patch);
     setAnsweredIds((prev) => new Set(prev).add(current.id));
+    setPassedIds((prev) => [...prev, current.id]);
     await refresh();
   };
+
+  // Re-answering/re-skipping a question you've stepped back to via
+  // "Previous" isn't a new attempt — it doesn't touch stats or the live
+  // queue, it just steps forward again toward the front.
+  const handleViewingFinish = backSteps > 0 ? () => setBackSteps((b) => Math.max(0, b - 1)) : handleFinish;
+  const handleViewingSkip = backSteps > 0 ? () => setBackSteps((b) => Math.max(0, b - 1)) : handleSkip;
 
   // If this exact filter already has a paused session, resume its progress
   // instead of silently wiping it — clicking "Mistakes" again after having
@@ -432,6 +460,8 @@ function ReviewPageInner() {
     setSource(src);
     setSkippedIds(new Set(existing ? existing.skippedIds : []));
     setAnsweredIds(new Set(existing ? existing.answeredIds : []));
+    setPassedIds([]);
+    setBackSteps(0);
     setStarted(true);
   };
 
@@ -470,6 +500,8 @@ function ReviewPageInner() {
       setSource(saved.source);
       setAnsweredIds(new Set(saved.answeredIds));
       setSkippedIds(new Set(saved.skippedIds));
+      setPassedIds([]);
+      setBackSteps(0);
       setStarted(true);
     };
     const discardPaused = (key) => {
@@ -722,7 +754,14 @@ function ReviewPageInner() {
           <div style={{ fontSize: 16, marginBottom: 8 }}>{skippedIds.size > 0 ? "Skipped everything left in this session." : "Session complete."}</div>
           <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 18 }}>{answeredIds.size} answered{skippedIds.size > 0 ? ` · ${skippedIds.size} skipped` : ""} this session.</div>
           <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-            {skippedIds.size > 0 && <button className="btn btn-primary" onClick={() => setSkippedIds(new Set())}>Go through skipped again</button>}
+            {skippedIds.size > 0 && (
+              <button
+                className="btn btn-primary"
+                onClick={() => { setSkippedIds(new Set()); setPassedIds([]); setBackSteps(0); }}
+              >
+                Go through skipped again
+              </button>
+            )}
             <button className="btn" onClick={backToSetup}>Back to setup</button>
           </div>
         </div>
@@ -732,8 +771,18 @@ function ReviewPageInner() {
 
   return (
     <AppShell>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
-        <div style={{ fontSize: 13, color: "var(--muted)" }}>{remaining.length} left{skippedIds.size > 0 ? ` · ${skippedIds.size} skipped` : ""}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>{remaining.length} left{skippedIds.size > 0 ? ` · ${skippedIds.size} skipped` : ""}</div>
+          <button
+            className="btn"
+            onClick={handlePrevious}
+            disabled={!canGoBack}
+            style={{ fontSize: 13, padding: "6px 12px" }}
+          >
+            ← Previous
+          </button>
+        </div>
         <button
           className="btn"
           onClick={backToSetup}
@@ -743,15 +792,20 @@ function ReviewPageInner() {
           Pause session
         </button>
       </div>
+      {backSteps > 0 && (
+        <div style={{ fontSize: 12.5, color: "var(--amber)", marginBottom: 10 }}>
+          Reviewing a previous question — checking or skipping here does not count as a new attempt, it just moves back toward where you left off.
+        </div>
+      )}
       <QuestionCard
-        key={current.id}
-        entry={current}
-        onBlanksExtracted={(blanks) => patchEntry(current.id, { blanks })}
-        onSolutionExtracted={(solution) => patchEntry(current.id, { solution })}
-        onEdited={(patch) => patchEntry(current.id, patch)}
-        onFinish={handleFinish}
-        onSkip={handleSkip}
-        minAnswerSeconds={25}
+        key={viewingEntry.id}
+        entry={viewingEntry}
+        onBlanksExtracted={(blanks) => patchEntry(viewingEntry.id, { blanks })}
+        onSolutionExtracted={(solution) => patchEntry(viewingEntry.id, { solution })}
+        onEdited={(patch) => patchEntry(viewingEntry.id, patch)}
+        onFinish={handleViewingFinish}
+        onSkip={handleViewingSkip}
+        minAnswerSeconds={backSteps > 0 ? 0 : 25}
       />
     </AppShell>
   );
