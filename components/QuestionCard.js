@@ -44,16 +44,23 @@ function numericAnswersMatch(userInput, correctValue) {
  * (and so all state below resets to its initial value) whenever the
  * question changes, instead of manually resetting state in an effect.
  */
-export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtracted, onEdited, onFinish, onSkip, minAnswerSeconds = 0 }) {
+export default function QuestionCard({
+  entry, onBlanksExtracted, onSolutionExtracted, onEdited, onFinish, onSkip, onDelete, minAnswerSeconds = 0,
+  initialSelections, initialNumericAnswers, initialChecked = false,
+}) {
   const [imageUrl, setImageUrl] = useState(null);
   const cachedBlanksUsable = blanksAreUsable(entry.blanks);
   const [blanks, setBlanks] = useState(cachedBlanksUsable ? entry.blanks : null);
   const [loadingBlanks, setLoadingBlanks] = useState(!cachedBlanksUsable);
   const [error, setError] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  const [selections, setSelections] = useState({});
-  const [numericAnswers, setNumericAnswers] = useState({});
-  const [checked, setChecked] = useState(false);
+  // Set when the parent is re-showing an already-answered question (the
+  // Review "Previous" button) — seeds the original selections and jumps
+  // straight to the checked/graded view instead of a blank form.
+  const [selections, setSelections] = useState(initialSelections || {});
+  const [numericAnswers, setNumericAnswers] = useState(initialNumericAnswers || {});
+  const [checked, setChecked] = useState(initialChecked);
 
   const [solution, setSolution] = useState(entry.solution || null);
   const [solutionVisible, setSolutionVisible] = useState(false);
@@ -481,18 +488,45 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
           <span className="pill" style={{ background: accent, color: "#0F1115" }}>{entry.section}</span>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>{entry.subtype}</span>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            className="btn"
-            onClick={() => onEdited?.({ starred: !entry.starred })}
-            title={entry.starred ? "Unmark as important" : "Mark as important"}
-            aria-label={entry.starred ? "Unmark as important" : "Mark as important"}
-            style={{ padding: "4px 8px", display: "flex", alignItems: "center" }}
-          >
-            <Star size={15} fill={entry.starred ? "var(--amber)" : "none"} color={entry.starred ? "var(--amber)" : "currentColor"} />
-          </button>
-          <button className="btn" onClick={startEdit} style={{ padding: "4px 10px", fontSize: 11.5 }}>Edit question</button>
-        </div>
+        {confirmingDelete ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12.5, color: "var(--red)" }}>Delete this question? This can&apos;t be undone.</span>
+            <button
+              className="btn btn-red"
+              style={{ padding: "4px 10px", fontSize: 11.5 }}
+              onClick={() => onDelete?.(entry.id)}
+            >
+              Yes, delete
+            </button>
+            <button className="btn" style={{ padding: "4px 10px", fontSize: 11.5 }} onClick={() => setConfirmingDelete(false)}>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="btn"
+              onClick={() => onEdited?.({ starred: !entry.starred })}
+              title={entry.starred ? "Unmark as important" : "Mark as important"}
+              aria-label={entry.starred ? "Unmark as important" : "Mark as important"}
+              style={{ padding: "4px 8px", display: "flex", alignItems: "center" }}
+            >
+              <Star size={15} fill={entry.starred ? "var(--amber)" : "none"} color={entry.starred ? "var(--amber)" : "currentColor"} />
+            </button>
+            <button className="btn" onClick={startEdit} style={{ padding: "4px 10px", fontSize: 11.5 }}>Edit question</button>
+            {onDelete && (
+              <button
+                className="btn"
+                onClick={() => setConfirmingDelete(true)}
+                title="Delete this question"
+                aria-label="Delete this question"
+                style={{ padding: "4px 10px", fontSize: 11.5, color: "var(--red)" }}
+              >
+                Delete
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {entry.passage && (
@@ -594,7 +628,7 @@ export default function QuestionCard({ entry, onBlanksExtracted, onSolutionExtra
             {allCorrect ? "✓ Correct" : "✗ Incorrect"}
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: solutionError ? 8 : 0 }}>
-            <button className="btn btn-primary" onClick={() => onFinish({ correct: allCorrect })}>Next question</button>
+            <button className="btn btn-primary" onClick={() => onFinish({ correct: allCorrect, selections, numericAnswers })}>Next question</button>
             {solutionVisible ? (
               <button className="btn" onClick={() => setSolutionVisible(false)}>Hide solution</button>
             ) : (

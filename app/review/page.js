@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import QuestionCard from "@/components/QuestionCard";
-import { listEntries, updateEntry, groupForSequentialPractice, getScreenshotUrlCached } from "@/lib/entries";
+import { listEntries, updateEntry, deleteEntry, groupForSequentialPractice, getScreenshotUrlCached } from "@/lib/entries";
 import { buildTiers, flattenTiers, resolveSource, filterMoreThanMistakes, filterPriorityMix, filterDateRange, RECENT_DAYS } from "@/lib/practiceFilters";
 import { blanksAreUsable } from "@/lib/extractionVersion";
 
@@ -241,6 +241,11 @@ function ReviewPageInner() {
   // 0 = viewing the live front of the queue. N>0 = looking back N steps
   // into passedIds instead.
   const [backSteps, setBackSteps] = useState(0);
+  // What you actually selected for each answered entry this session, keyed
+  // by entry id — lets "Previous" show your original answer (already
+  // checked/graded) instead of a blank form. Session-only, same lifetime
+  // as passedIds/backSteps.
+  const [answersHistory, setAnswersHistory] = useState({});
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
   const [priorityMixCount, setPriorityMixCount] = useState(40);
   const [loggedSinceDate, setLoggedSinceDate] = useState(() => loadLoggedSinceDate(initial.section));
@@ -284,6 +289,7 @@ function ReviewPageInner() {
     setSkippedIds(new Set(saved ? saved.skippedIds : []));
     setPassedIds([]);
     setBackSteps(0);
+    setAnswersHistory({});
     setStarted(!!saved);
     setMode(null);
   };
@@ -427,7 +433,7 @@ function ReviewPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upcomingKey]);
 
-  const handleFinish = async ({ correct }) => {
+  const handleFinish = async ({ correct, selections, numericAnswers }) => {
     const totalAttempts = (current.totalAttempts || 0) + 1;
     const wrongAttempts = (current.wrongAttempts || 0) + (correct ? 0 : 1);
     const patch = { totalAttempts, wrongAttempts };
@@ -443,6 +449,7 @@ function ReviewPageInner() {
     await updateEntry(current.id, patch);
     setAnsweredIds((prev) => new Set(prev).add(current.id));
     setPassedIds((prev) => [...prev, current.id]);
+    setAnswersHistory((prev) => ({ ...prev, [current.id]: { selections, numericAnswers } }));
     await refresh();
   };
 
@@ -451,6 +458,19 @@ function ReviewPageInner() {
   // queue, it just steps forward again toward the front.
   const handleViewingFinish = backSteps > 0 ? () => setBackSteps((b) => Math.max(0, b - 1)) : handleFinish;
   const handleViewingSkip = backSteps > 0 ? () => setBackSteps((b) => Math.max(0, b - 1)) : handleSkip;
+
+  // Deleting removes it from `entries` outright, so the queue/remaining/
+  // current recompute without it on the next render — no separate "advance
+  // to next question" step needed. If you were looking back at the exact
+  // entry you just deleted, its lookup falls through to the live current
+  // question (see viewingEntry's `|| current` fallback) — snap backSteps
+  // to 0 too so the "reviewing a previous question" banner doesn't linger
+  // over what's now actually the live question.
+  const handleDelete = async (id) => {
+    await deleteEntry(id);
+    setEntries((prev) => (prev || []).filter((e) => e.id !== id));
+    if (viewingEntry?.id === id) setBackSteps(0);
+  };
 
   // If this exact filter already has a paused session, resume its progress
   // instead of silently wiping it — clicking "Mistakes" again after having
@@ -462,6 +482,7 @@ function ReviewPageInner() {
     setAnsweredIds(new Set(existing ? existing.answeredIds : []));
     setPassedIds([]);
     setBackSteps(0);
+    setAnswersHistory({});
     setStarted(true);
   };
 
@@ -502,6 +523,7 @@ function ReviewPageInner() {
       setSkippedIds(new Set(saved.skippedIds));
       setPassedIds([]);
       setBackSteps(0);
+      setAnswersHistory({});
       setStarted(true);
     };
     const discardPaused = (key) => {
@@ -757,7 +779,7 @@ function ReviewPageInner() {
             {skippedIds.size > 0 && (
               <button
                 className="btn btn-primary"
-                onClick={() => { setSkippedIds(new Set()); setPassedIds([]); setBackSteps(0); }}
+                onClick={() => { setSkippedIds(new Set()); setPassedIds([]); setBackSteps(0); setAnswersHistory({}); }}
               >
                 Go through skipped again
               </button>
@@ -805,7 +827,11 @@ function ReviewPageInner() {
         onEdited={(patch) => patchEntry(viewingEntry.id, patch)}
         onFinish={handleViewingFinish}
         onSkip={handleViewingSkip}
+        onDelete={handleDelete}
         minAnswerSeconds={backSteps > 0 ? 0 : 25}
+        initialSelections={backSteps > 0 ? answersHistory[viewingEntry.id]?.selections : undefined}
+        initialNumericAnswers={backSteps > 0 ? answersHistory[viewingEntry.id]?.numericAnswers : undefined}
+        initialChecked={backSteps > 0 && !!answersHistory[viewingEntry.id]}
       />
     </AppShell>
   );
