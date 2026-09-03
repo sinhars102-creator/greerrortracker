@@ -32,6 +32,8 @@ Writer's essay:
 ${essayText.trim()}
 """
 
+Also do a copy-editing pass: find the specific grammar, sentence-structure, agreement, or usage mistakes actually present in the essay (not style preferences, not the content/argument itself — pure mechanics and sentence construction). For each one, "quote" MUST be copied EXACTLY, character-for-character, from the essay above (same spelling, punctuation, and capitalization) so it can be located automatically — never paraphrase or summarize the quote. Keep each quote short (a phrase or clause, not a whole sentence) and precisely bounded around the actual error. If the essay has no real grammar/structure mistakes, return an empty array — do not invent issues to fill it.
+
 Respond with ONLY valid JSON, no markdown fences, no preamble:
 {
   "score": 4.5,
@@ -45,11 +47,14 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
       { "role": "Body Paragraph 2", "content": "..." },
       { "role": "Conclusion", "content": "..." }
     ]
-  }
+  },
+  "issues": [
+    { "quote": "exact substring copied from the essay", "issue": "short description of the grammar/sentence-structure problem", "suggestion": "the corrected version of that phrase" }
+  ]
 }
-Use 4 to 6 total boxes in "boxes" (always including Introduction and Conclusion), each tailored specifically to this prompt so it works as a rewrite outline — not generic essay-structure advice.`;
+Use 4 to 6 total boxes in "boxes" (always including Introduction and Conclusion), each tailored specifically to this prompt so it works as a rewrite outline — not generic essay-structure advice. Use up to 10 "issues", ordered by how much they hurt the writing.`;
 
-    const raw = await callClaude(gradingPrompt, 2000);
+    const raw = await callClaude(gradingPrompt, 3000);
     const parsed = extractJSON(raw);
     if (!parsed || typeof parsed.score !== "number") {
       return NextResponse.json({ error: "Could not parse grading response" }, { status: 502 });
@@ -62,6 +67,19 @@ Use 4 to 6 total boxes in "boxes" (always including Introduction and Conclusion)
           .slice(0, 8)
           .map((b) => ({ role: b.role.trim(), content: b.content.trim() }))
       : [];
+    // Only keep issues whose quote is actually findable in the submitted
+    // text — an un-locatable quote can't be highlighted and would just be
+    // a confusing, unverifiable claim.
+    const issues = Array.isArray(parsed.issues)
+      ? parsed.issues
+          .filter((i) => i && typeof i.quote === "string" && i.quote.trim() && essayText.includes(i.quote))
+          .slice(0, 10)
+          .map((i) => ({
+            quote: i.quote,
+            issue: typeof i.issue === "string" ? i.issue : "",
+            suggestion: typeof i.suggestion === "string" ? i.suggestion : "",
+          }))
+      : [];
 
     return NextResponse.json({
       score,
@@ -70,6 +88,7 @@ Use 4 to 6 total boxes in "boxes" (always including Introduction and Conclusion)
       structure: {
         thesis: typeof parsed.structure?.thesis === "string" ? parsed.structure.thesis : "",
         boxes,
+        issues,
       },
     });
   } catch (e) {

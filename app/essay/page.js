@@ -69,7 +69,7 @@ function StructureDiagram({ structure }) {
   );
 }
 
-function EssayHistoryRow({ essay, onDelete }) {
+function EssayHistoryRow({ essay, onOpen, onDelete }) {
   const tier = essay.score != null ? scoreTier(essay.score) : null;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 12.5, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
@@ -78,10 +78,94 @@ function EssayHistoryRow({ essay, onDelete }) {
       {tier && (
         <span className="mono" style={{ fontWeight: 700, color: tier.color }}>{essay.score}/6</span>
       )}
-      <span style={{ color: "var(--muted)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <button
+        onClick={() => onOpen(essay)}
+        style={{
+          background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left",
+          color: "var(--text)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          textDecoration: "underline", textDecorationColor: "var(--border)",
+        }}
+        title="Open this essay"
+      >
         {essay.prompt}
-      </span>
+      </button>
       <button className="btn" style={{ fontSize: 11, padding: "3px 8px", color: "var(--red)" }} onClick={() => onDelete(essay.id)}>Delete</button>
+    </div>
+  );
+}
+
+// Splits essayText into plain-text and highlighted segments wherever an
+// issue's quote actually occurs — quotes that can't be found (already
+// filtered server-side, but defensive here too) are simply skipped rather
+// than breaking the render.
+function highlightSegments(text, issues) {
+  if (!text || !issues || issues.length === 0) return [{ type: "text", content: text || "" }];
+  const matches = [];
+  issues.forEach((issue, idx) => {
+    const start = text.indexOf(issue.quote);
+    if (start !== -1) matches.push({ start, end: start + issue.quote.length, idx });
+  });
+  matches.sort((a, b) => a.start - b.start);
+  const nonOverlapping = [];
+  let lastEnd = -1;
+  for (const m of matches) {
+    if (m.start >= lastEnd) {
+      nonOverlapping.push(m);
+      lastEnd = m.end;
+    }
+  }
+  const segments = [];
+  let cursor = 0;
+  nonOverlapping.forEach((m) => {
+    if (m.start > cursor) segments.push({ type: "text", content: text.slice(cursor, m.start) });
+    segments.push({ type: "highlight", content: text.slice(m.start, m.end), idx: m.idx });
+    cursor = m.end;
+  });
+  if (cursor < text.length) segments.push({ type: "text", content: text.slice(cursor) });
+  return segments;
+}
+
+function EssayWithHighlights({ essayText, issues }) {
+  const segments = highlightSegments(essayText, issues || []);
+  return (
+    <div style={{ whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.7 }}>
+      {segments.map((seg, i) =>
+        seg.type === "highlight" ? (
+          <span
+            key={i}
+            title={issues[seg.idx]?.issue}
+            style={{
+              background: "rgba(193,85,75,0.18)",
+              borderBottom: "2px solid var(--red)",
+              cursor: "help",
+            }}
+          >
+            {seg.content}
+            <sup style={{ color: "var(--red)", fontSize: 10, marginLeft: 1 }}>{seg.idx + 1}</sup>
+          </span>
+        ) : (
+          <span key={i}>{seg.content}</span>
+        )
+      )}
+    </div>
+  );
+}
+
+function IssuesList({ issues }) {
+  if (!issues || issues.length === 0) return null;
+  return (
+    <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+      {issues.map((issue, i) => (
+        <div key={i} style={{ fontSize: 12.5, display: "flex", gap: 8 }}>
+          <span style={{ color: "var(--red)", fontWeight: 700 }}>{i + 1}.</span>
+          <div>
+            <span style={{ color: "var(--muted)" }}>&ldquo;{issue.quote}&rdquo;</span> — {issue.issue}
+            {issue.suggestion && (
+              <span style={{ color: "var(--sage)" }}> → {issue.suggestion}</span>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -145,6 +229,14 @@ export default function EssayPage() {
   const handleDeleteEssay = async (id) => {
     setHistory((prev) => (prev || []).filter((e) => e.id !== id));
     deleteEssay(id).catch(() => {});
+  };
+
+  const openEssay = (essay) => {
+    setResult(essay);
+    setPrompt(essay.prompt);
+    setTaskType(essay.taskType);
+    setError("");
+    setStage("result");
   };
 
   return (
@@ -227,7 +319,15 @@ export default function EssayPage() {
           <div style={{ fontSize: 13.5, marginBottom: 14 }}>{result.scoreSummary}</div>
           <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.6, marginBottom: 22 }}>{result.feedback}</div>
 
-          <div style={{ ...eyebrow, marginBottom: 14, textAlign: "center" }}>Structure for your rewrite</div>
+          <div style={{ ...eyebrow, marginBottom: 10 }}>
+            Your essay{result.structure?.issues?.length > 0 ? ` — ${result.structure.issues.length} grammar/structure note${result.structure.issues.length === 1 ? "" : "s"} marked` : ""}
+          </div>
+          <div style={{ border: "1px solid var(--border)", borderRadius: 5, background: "var(--panel2)", padding: 14, marginBottom: 8 }}>
+            <EssayWithHighlights essayText={result.essayText} issues={result.structure?.issues} />
+          </div>
+          <IssuesList issues={result.structure?.issues} />
+
+          <div style={{ ...eyebrow, marginTop: 26, marginBottom: 14, textAlign: "center" }}>Structure for your rewrite</div>
           <StructureDiagram structure={result.structure} />
 
           <div style={{ display: "flex", gap: 10, marginTop: 22, justifyContent: "center" }}>
@@ -246,7 +346,7 @@ export default function EssayPage() {
         ) : (
           <div>
             {history.map((e) => (
-              <EssayHistoryRow key={e.id} essay={e} onDelete={handleDeleteEssay} />
+              <EssayHistoryRow key={e.id} essay={e} onOpen={openEssay} onDelete={handleDeleteEssay} />
             ))}
           </div>
         )}
