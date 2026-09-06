@@ -16,7 +16,7 @@ const INTERVALS = [1, 3, 7, 14, 30];
 const SECTIONS = ["Verbal", "Quant"];
 const TIER_INFO = [
   { key: "starred", label: "★ Starred (important)" },
-  { key: "starredMistakes", label: "★ Starred + Mistakes" },
+  { key: "starredMistakes", label: "★ Starred + Mistakes + Relook" },
   { key: "mistakes", label: "Mistakes" },
   { key: "recent", label: `Recent (last ${RECENT_DAYS} days)` },
   { key: "neverAttempted", label: "Never attempted" },

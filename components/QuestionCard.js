@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Star } from "lucide-react";
+import { Star, Eye } from "lucide-react";
 import { getScreenshotUrlCached, uploadScreenshot, compressImageDataUrl, dataUrlToBlobAndParts } from "@/lib/entries";
 import { createClient } from "@/lib/supabase/client";
 import { blanksAreUsable } from "@/lib/extractionVersion";
@@ -514,8 +514,11 @@ export default function QuestionCard({
                   // so the Starred + Mistakes tier only counts wrong
                   // attempts from here forward, not ones that happened
                   // before this star. Cleared on unstar so restarring later
-                  // takes a fresh snapshot.
+                  // takes a fresh snapshot. relook only makes sense on a
+                  // starred question (starring already means "come back to
+                  // this"), so unstarring clears it too.
                   wrongAttemptsAtStar: nextStarred ? (entry.wrongAttempts || 0) : null,
+                  ...(nextStarred ? {} : { relook: false }),
                 });
               }}
               title={entry.starred ? "Unmark as important" : "Mark as important"}
@@ -524,6 +527,17 @@ export default function QuestionCard({
             >
               <Star size={15} fill={entry.starred ? "var(--amber)" : "none"} color={entry.starred ? "var(--amber)" : "currentColor"} />
             </button>
+            {entry.starred && (
+              <button
+                className="btn"
+                onClick={() => onEdited?.({ relook: !entry.relook })}
+                title={entry.relook ? "Unmark — no longer needs a relook" : "Flag this one to come back to later"}
+                aria-label={entry.relook ? "Unmark — no longer needs a relook" : "Flag this one to come back to later"}
+                style={{ padding: "4px 8px", display: "flex", alignItems: "center" }}
+              >
+                <Eye size={15} color={entry.relook ? "var(--amber)" : "currentColor"} />
+              </button>
+            )}
             <button className="btn" onClick={startEdit} style={{ padding: "4px 10px", fontSize: 11.5 }}>Edit question</button>
             {onDelete && (
               <button
