@@ -506,7 +506,18 @@ export default function QuestionCard({
           <div style={{ display: "flex", gap: 8 }}>
             <button
               className="btn"
-              onClick={() => onEdited?.({ starred: !entry.starred })}
+              onClick={() => {
+                const nextStarred = !entry.starred;
+                onEdited?.({
+                  starred: nextStarred,
+                  // Snapshot wrongAttempts as the "since starring" baseline
+                  // so the Starred + Mistakes tier only counts wrong
+                  // attempts from here forward, not ones that happened
+                  // before this star. Cleared on unstar so restarring later
+                  // takes a fresh snapshot.
+                  wrongAttemptsAtStar: nextStarred ? (entry.wrongAttempts || 0) : null,
+                });
+              }}
               title={entry.starred ? "Unmark as important" : "Mark as important"}
               aria-label={entry.starred ? "Unmark as important" : "Mark as important"}
               style={{ padding: "4px 8px", display: "flex", alignItems: "center" }}

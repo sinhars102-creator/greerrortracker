@@ -29,6 +29,7 @@ create table if not exists entries (
   next_review date not null default current_date,
   mastered boolean not null default false,
   starred boolean not null default false, -- flagged as important during Review, for a dedicated practice tier
+  wrong_attempts_at_star int, -- snapshot of wrong_attempts taken the moment starred was last turned on; null while never starred. Lets "Starred + Mistakes" mean "gotten wrong since I starred it", not "ever gotten wrong"
   total_attempts int not null default 0,
   wrong_attempts int not null default 0,
   pending boolean not null default false,
@@ -50,6 +51,12 @@ alter table entries add column if not exists import_source text;
 alter table entries add column if not exists import_ref text;
 -- for installs that already ran the create table above before starring existed
 alter table entries add column if not exists starred boolean not null default false;
+-- for installs that already ran the create table above before the starred+mistakes tier existed
+alter table entries add column if not exists wrong_attempts_at_star int;
+-- backfill: for anything already starred, snapshot "now" as the baseline so
+-- past wrong attempts (before this feature existed) don't retroactively
+-- count as "gotten wrong since starring"
+update entries set wrong_attempts_at_star = wrong_attempts where starred = true and wrong_attempts_at_star is null;
 
 create index if not exists entries_user_id_idx on entries(user_id);
 create index if not exists entries_next_review_idx on entries(user_id, next_review) where not mastered;
