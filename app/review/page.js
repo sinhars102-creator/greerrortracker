@@ -918,11 +918,6 @@ function ReviewPageInner() {
           Reviewing a previous question — use Next above to return to where you left off. Checking or skipping here does not count as a new attempt.
         </div>
       )}
-      {backSteps === 0 && retestEntry && (
-        <div style={{ fontSize: 12.5, color: "var(--amber)", marginBottom: 10, fontWeight: 600 }}>
-          ↻ Retest ({dueRetest.stage}) — {retestEntry.relook ? "you flagged this for a second look" : "you got this wrong earlier this session"}. Let&apos;s see if it stuck.
-        </div>
-      )}
       <QuestionCard
         key={viewingEntry.id}
         entry={viewingEntry}
