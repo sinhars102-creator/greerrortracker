@@ -276,6 +276,10 @@ function ReviewPageInner() {
   // of what's still owed a retest.
   const [stepCount, setStepCount] = useState(initial.stepCount);
   const [retestPending, setRetestPending] = useState(initial.retestPending); // [{ id, dueAt, stage: "short"|"medium"|"long" }]
+  // Anti-clustering guard so two retests can't land back-to-back with
+  // nothing real in between — see the dueRetest comment below. Session-only,
+  // worst case after a reload is one incidental back-to-back pair.
+  const [lastShownWasRetest, setLastShownWasRetest] = useState(false);
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
   const [priorityMixCount, setPriorityMixCount] = useState(40);
   const [loggedSinceDate, setLoggedSinceDate] = useState(() => loadLoggedSinceDate(initial.section));
@@ -322,6 +326,7 @@ function ReviewPageInner() {
     setAnswersHistory({});
     setStepCount(saved?.stepCount || 0);
     setRetestPending(saved?.retestPending || []);
+    setLastShownWasRetest(false);
     setStarted(!!saved);
     setMode(null);
   };
@@ -394,12 +399,17 @@ function ReviewPageInner() {
 
   // A wrong answer schedules its entry into retestPending rather than
   // vanishing from the session — it resurfaces once stepCount reaches its
-  // dueAt (a random gap depending on its stage, see RETEST_STAGE_GAPS). If the
-  // normal queue runs dry before any retest comes due, there's nothing left
-  // to pad the gap with anyway, so the earliest pending one fires
-  // immediately instead of leaving the session looking falsely "complete".
+  // dueAt (a random gap depending on its stage, see RETEST_STAGE_GAPS). If
+  // several items become due around the same step, always preferring
+  // whichever is due would surface them back-to-back — no different
+  // questions actually in between, which defeats the point of testing
+  // whether it's stuck after a real gap. So a retest is skipped in favor of
+  // the normal queue if the immediately preceding question was ALSO a
+  // retest, unless the normal queue has genuinely run dry (same forced
+  // fallback as before).
   const dueRetest = retestPending.length === 0 ? null : remaining.length === 0
     ? retestPending.reduce((best, r) => (!best || r.dueAt < best.dueAt ? r : best), null)
+    : lastShownWasRetest ? null
     : retestPending.reduce((best, r) => (r.dueAt <= stepCount && (!best || r.dueAt < best.dueAt) ? r : best), null);
   const retestEntry = dueRetest ? (entries || []).find((e) => e.id === dueRetest.id) : null;
   const current = started ? (retestEntry || remaining[0]) : null;
@@ -434,6 +444,7 @@ function ReviewPageInner() {
     // with no way to move past it (it isn't part of `remaining`, so
     // skippedIds alone wouldn't keep it from being picked as `current` again).
     setRetestPending((prev) => prev.filter((r) => r.id !== current.id));
+    setLastShownWasRetest(!!retestEntry);
   };
 
   const patchEntry = (id, patch) => {
@@ -509,6 +520,7 @@ function ReviewPageInner() {
     // stale pre-update value.
     const nextStep = stepCount + 1;
     setStepCount(nextStep);
+    setLastShownWasRetest(!!retestEntry);
     setRetestPending((prev) => {
       const already = prev.find((r) => r.id === current.id);
       const withoutThis = prev.filter((r) => r.id !== current.id);
@@ -568,6 +580,7 @@ function ReviewPageInner() {
     setAnswersHistory({});
     setStepCount(existing?.stepCount || 0);
     setRetestPending(existing?.retestPending || []);
+    setLastShownWasRetest(false);
     setStarted(true);
   };
 
@@ -611,6 +624,7 @@ function ReviewPageInner() {
       setAnswersHistory({});
       setStepCount(saved.stepCount || 0);
       setRetestPending(saved.retestPending || []);
+      setLastShownWasRetest(false);
       setStarted(true);
     };
     const discardPaused = (key) => {
