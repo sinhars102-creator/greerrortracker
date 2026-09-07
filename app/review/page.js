@@ -14,6 +14,25 @@ const VERBAL_BREAKDOWN_SUBTYPES = ["Reading Comprehension", "Text Completion", "
 
 const INTERVALS = [1, 3, 7, 14, 30];
 const SECTIONS = ["Verbal", "Quant"];
+
+// Getting a question right once, right after it was in front of you, proves
+// less than getting it right again once it's actually faded from
+// short-term memory — so a wrong answer (or a correct answer on a
+// relook-flagged entry — you asked to be tested again even though you got
+// it, so relook forces the same loop rather than skipping it) starts a
+// 3-stage in-session retest loop: short (a handful of questions later) ->
+// medium (~10-12 later) -> long (~20-22 later), advancing a stage only on a
+// correct retest. A wrong retest at any stage doesn't advance or reset — it
+// just retries that same stage again, with no cap on how many times. Only
+// passing all three in a row exits the loop; the entry still carries its
+// original wrongAttempts either way, so it resurfaces normally in the
+// Mistakes tier next session regardless of how the in-session loop went.
+const RETEST_STAGE_ORDER = ["short", "medium", "long"];
+const RETEST_STAGE_GAPS = { short: [3, 7], medium: [10, 12], long: [20, 22] };
+function randomRetestGap(stage) {
+  const [min, max] = RETEST_STAGE_GAPS[stage];
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
 const TIER_INFO = [
   { key: "starred", label: "★ Starred (important)" },
   { key: "starredMistakes", label: "★ Starred + Mistakes + Relook" },
@@ -247,6 +266,13 @@ function ReviewPageInner() {
   // checked/graded) instead of a blank form. Session-only, same lifetime
   // as passedIds/backSteps.
   const [answersHistory, setAnswersHistory] = useState({});
+  // In-session-only retest scheduling (see RETEST_* above): stepCount
+  // advances once per finished question (queue or retest), and each pending
+  // entry tracks which stage of the short/medium/long loop it's on and the
+  // step it's next due at. Not persisted across pause/resume, same lifetime
+  // as passedIds/answersHistory.
+  const [stepCount, setStepCount] = useState(0);
+  const [retestPending, setRetestPending] = useState([]); // [{ id, dueAt, stage: "short"|"medium"|"long" }]
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
   const [priorityMixCount, setPriorityMixCount] = useState(40);
   const [loggedSinceDate, setLoggedSinceDate] = useState(() => loadLoggedSinceDate(initial.section));
@@ -291,6 +317,8 @@ function ReviewPageInner() {
     setPassedIds([]);
     setBackSteps(0);
     setAnswersHistory({});
+    setStepCount(0);
+    setRetestPending([]);
     setStarted(!!saved);
     setMode(null);
   };
@@ -360,16 +388,27 @@ function ReviewPageInner() {
   // Skipped entries stay in the pool but are passed over for the rest of
   // this session.
   const remaining = queue.filter((e) => !answeredIds.has(e.id) && !skippedIds.has(e.id));
-  const current = started ? remaining[0] : null;
 
-  // Truly nothing left (not even skipped ones to revisit) — no reason to
-  // keep a resumable session around for an empty queue.
+  // A wrong answer schedules its entry into retestPending rather than
+  // vanishing from the session — it resurfaces once stepCount reaches its
+  // dueAt (a random gap depending on its stage, see RETEST_STAGE_GAPS). If the
+  // normal queue runs dry before any retest comes due, there's nothing left
+  // to pad the gap with anyway, so the earliest pending one fires
+  // immediately instead of leaving the session looking falsely "complete".
+  const dueRetest = retestPending.length === 0 ? null : remaining.length === 0
+    ? retestPending.reduce((best, r) => (!best || r.dueAt < best.dueAt ? r : best), null)
+    : retestPending.reduce((best, r) => (r.dueAt <= stepCount && (!best || r.dueAt < best.dueAt) ? r : best), null);
+  const retestEntry = dueRetest ? (entries || []).find((e) => e.id === dueRetest.id) : null;
+  const current = started ? (retestEntry || remaining[0]) : null;
+
+  // Truly nothing left (not even skipped ones to revisit, or a retest still
+  // owed) — no reason to keep a resumable session around for an empty queue.
   useEffect(() => {
-    if (started && entries && !current && skippedIds.size === 0 && source) {
+    if (started && entries && !current && skippedIds.size === 0 && retestPending.length === 0 && source) {
       clearSessionKey(sessionKeyFor(section, source));
       saveActiveSource(section, null);
     }
-  }, [started, entries, current, skippedIds.size, section, source]);
+  }, [started, entries, current, skippedIds.size, retestPending.length, section, source]);
 
   // "Previous" steps back through passedIds instead of the live front of
   // the queue. Looking up by id in `entries` (not `remaining`, which has
@@ -388,6 +427,10 @@ function ReviewPageInner() {
   const handleSkip = () => {
     setSkippedIds((prev) => new Set(prev).add(current.id));
     setPassedIds((prev) => [...prev, current.id]);
+    // Skipping a due retest cancels it rather than leaving it "due" forever
+    // with no way to move past it (it isn't part of `remaining`, so
+    // skippedIds alone wouldn't keep it from being picked as `current` again).
+    setRetestPending((prev) => prev.filter((r) => r.id !== current.id));
   };
 
   const patchEntry = (id, patch) => {
@@ -456,6 +499,37 @@ function ReviewPageInner() {
     setAnsweredIds((prev) => new Set(prev).add(current.id));
     setPassedIds((prev) => [...prev, current.id]);
     setAnswersHistory((prev) => ({ ...prev, [current.id]: { selections, numericAnswers } }));
+
+    // Advance (or hold) this entry's spot in the short/medium/long retest
+    // loop. nextStep is computed here rather than read back from state so
+    // dueAt lands relative to the step this very answer completes, not a
+    // stale pre-update value.
+    const nextStep = stepCount + 1;
+    setStepCount(nextStep);
+    setRetestPending((prev) => {
+      const already = prev.find((r) => r.id === current.id);
+      const withoutThis = prev.filter((r) => r.id !== current.id);
+      if (correct) {
+        if (!already) {
+          // Right the first time normally means no loop needed — except a
+          // relook flag means "test me again anyway even though I got it",
+          // so it still starts the loop at the first stage.
+          if (!current.relook) return withoutThis;
+          const stage = RETEST_STAGE_ORDER[0];
+          return [...withoutThis, { id: current.id, stage, dueAt: nextStep + randomRetestGap(stage) }];
+        }
+        const nextStageIdx = RETEST_STAGE_ORDER.indexOf(already.stage) + 1;
+        if (nextStageIdx >= RETEST_STAGE_ORDER.length) return withoutThis; // passed long — loop complete
+        const stage = RETEST_STAGE_ORDER[nextStageIdx];
+        return [...withoutThis, { id: current.id, stage, dueAt: nextStep + randomRetestGap(stage) }];
+      }
+      // Wrong — hold at the current stage (or enter the loop at "short" if
+      // this was the original attempt) and retry it again. No cap: it keeps
+      // coming back until it's actually answered correctly at every stage.
+      const stage = already ? already.stage : RETEST_STAGE_ORDER[0];
+      return [...withoutThis, { id: current.id, stage, dueAt: nextStep + randomRetestGap(stage) }];
+    });
+
     await refresh();
   };
 
@@ -489,6 +563,8 @@ function ReviewPageInner() {
     setPassedIds([]);
     setBackSteps(0);
     setAnswersHistory({});
+    setStepCount(0);
+    setRetestPending([]);
     setStarted(true);
   };
 
@@ -530,6 +606,8 @@ function ReviewPageInner() {
       setPassedIds([]);
       setBackSteps(0);
       setAnswersHistory({});
+      setStepCount(0);
+      setRetestPending([]);
       setStarted(true);
     };
     const discardPaused = (key) => {
@@ -801,7 +879,10 @@ function ReviewPageInner() {
     <AppShell>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>{remaining.length} left{skippedIds.size > 0 ? ` · ${skippedIds.size} skipped` : ""}</div>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>
+            {remaining.length} left{skippedIds.size > 0 ? ` · ${skippedIds.size} skipped` : ""}
+            {retestPending.length > 0 ? ` · ${retestPending.length} to retest` : ""}
+          </div>
           <button
             className="btn"
             onClick={handlePrevious}
@@ -832,6 +913,11 @@ function ReviewPageInner() {
       {backSteps > 0 && (
         <div style={{ fontSize: 12.5, color: "var(--amber)", marginBottom: 10 }}>
           Reviewing a previous question — use Next above to return to where you left off. Checking or skipping here does not count as a new attempt.
+        </div>
+      )}
+      {backSteps === 0 && retestEntry && (
+        <div style={{ fontSize: 12.5, color: "var(--amber)", marginBottom: 10, fontWeight: 600 }}>
+          ↻ Retest ({dueRetest.stage}) — {retestEntry.relook ? "you flagged this for a second look" : "you got this wrong earlier this session"}. Let&apos;s see if it stuck.
         </div>
       )}
       <QuestionCard
