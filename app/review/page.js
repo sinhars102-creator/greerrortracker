@@ -106,10 +106,10 @@ function loadSessionFor(section, source) {
     return parsed && parsed.source ? parsed : null;
   } catch { return null; }
 }
-function saveSessionFor(section, source, answeredIds, skippedIds) {
+function saveSessionFor(section, source, answeredIds, skippedIds, stepCount, retestPending) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(sessionKeyFor(section, source), JSON.stringify({ source, answeredIds: [...answeredIds], skippedIds: [...skippedIds] }));
+    localStorage.setItem(sessionKeyFor(section, source), JSON.stringify({ source, answeredIds: [...answeredIds], skippedIds: [...skippedIds], stepCount, retestPending }));
   } catch { /* storage full/unavailable — session just won't resume */ }
 }
 function clearSessionKey(key) {
@@ -231,7 +231,7 @@ function computeInitialState(searchParams) {
   const section = SECTIONS.includes(searchParams.get("section")) ? searchParams.get("section") : (loadLastSection() || "Verbal");
   const deepLinkSource = parseSourceFromParams(searchParams);
   if (deepLinkSource) {
-    return { section, source: deepLinkSource, started: true, answeredIds: new Set(), skippedIds: new Set() };
+    return { section, source: deepLinkSource, started: true, answeredIds: new Set(), skippedIds: new Set(), stepCount: 0, retestPending: [] };
   }
   const activeSource = loadActiveSource(section);
   const saved = activeSource ? loadSessionFor(section, activeSource) : null;
@@ -241,6 +241,8 @@ function computeInitialState(searchParams) {
     started: !!saved,
     answeredIds: new Set(saved ? saved.answeredIds : []),
     skippedIds: new Set(saved ? saved.skippedIds : []),
+    stepCount: saved?.stepCount || 0,
+    retestPending: saved?.retestPending || [],
   };
 }
 
@@ -266,13 +268,14 @@ function ReviewPageInner() {
   // checked/graded) instead of a blank form. Session-only, same lifetime
   // as passedIds/backSteps.
   const [answersHistory, setAnswersHistory] = useState({});
-  // In-session-only retest scheduling (see RETEST_* above): stepCount
-  // advances once per finished question (queue or retest), and each pending
-  // entry tracks which stage of the short/medium/long loop it's on and the
-  // step it's next due at. Not persisted across pause/resume, same lifetime
-  // as passedIds/answersHistory.
-  const [stepCount, setStepCount] = useState(0);
-  const [retestPending, setRetestPending] = useState([]); // [{ id, dueAt, stage: "short"|"medium"|"long" }]
+  // Retest scheduling (see RETEST_* above): stepCount advances once per
+  // finished question (queue or retest), and each pending entry tracks
+  // which stage of the short/medium/long loop it's on and the step it's
+  // next due at. Persisted alongside answeredIds/skippedIds (see
+  // saveSessionFor) so a reload or redeploy mid-session doesn't lose track
+  // of what's still owed a retest.
+  const [stepCount, setStepCount] = useState(initial.stepCount);
+  const [retestPending, setRetestPending] = useState(initial.retestPending); // [{ id, dueAt, stage: "short"|"medium"|"long" }]
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
   const [priorityMixCount, setPriorityMixCount] = useState(40);
   const [loggedSinceDate, setLoggedSinceDate] = useState(() => loadLoggedSinceDate(initial.section));
@@ -317,8 +320,8 @@ function ReviewPageInner() {
     setPassedIds([]);
     setBackSteps(0);
     setAnswersHistory({});
-    setStepCount(0);
-    setRetestPending([]);
+    setStepCount(saved?.stepCount || 0);
+    setRetestPending(saved?.retestPending || []);
     setStarted(!!saved);
     setMode(null);
   };
@@ -329,9 +332,9 @@ function ReviewPageInner() {
   // refresh resumes it directly without needing the resume list.
   useEffect(() => {
     if (!started || !source) return;
-    saveSessionFor(section, source, answeredIds, skippedIds);
+    saveSessionFor(section, source, answeredIds, skippedIds, stepCount, retestPending);
     saveActiveSource(section, source);
-  }, [section, source, started, answeredIds, skippedIds]);
+  }, [section, source, started, answeredIds, skippedIds, stepCount, retestPending]);
 
   const bySection = useMemo(() => (entries || []).filter((e) => e.section === section && !e.pending), [entries, section]);
   // When a From and/or To date is picked, every number in the tier-wise
@@ -563,8 +566,8 @@ function ReviewPageInner() {
     setPassedIds([]);
     setBackSteps(0);
     setAnswersHistory({});
-    setStepCount(0);
-    setRetestPending([]);
+    setStepCount(existing?.stepCount || 0);
+    setRetestPending(existing?.retestPending || []);
     setStarted(true);
   };
 
@@ -606,8 +609,8 @@ function ReviewPageInner() {
       setPassedIds([]);
       setBackSteps(0);
       setAnswersHistory({});
-      setStepCount(0);
-      setRetestPending([]);
+      setStepCount(saved.stepCount || 0);
+      setRetestPending(saved.retestPending || []);
       setStarted(true);
     };
     const discardPaused = (key) => {
