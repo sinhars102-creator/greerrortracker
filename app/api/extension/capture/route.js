@@ -10,7 +10,7 @@ export async function POST(request) {
   const { supabase, user } = auth;
 
   try {
-    const { image, section, subtype, correctAnswer } = await request.json();
+    const { image, section, subtype, correctAnswer, gotWrong, yourAnswer } = await request.json();
     if (!image || !image.base64) {
       return NextResponse.json({ error: "No image given" }, { status: 400 });
     }
@@ -22,7 +22,12 @@ export async function POST(request) {
       return NextResponse.json({ error: "Invalid subtype" }, { status: 400 });
     }
 
-    // 1. Create the entry immediately, pending transcription.
+    // 1. Create the entry immediately, pending transcription. gotWrong
+    // (default true — this is a mistake tracker, most captures are misses)
+    // records this as a real first attempt right away, wrong or not, so a
+    // missed question lands straight in the Mistakes tier without waiting
+    // on a later in-app review to mark it wrong.
+    const wasWrong = gotWrong !== false;
     const { data: row, error: insertErr } = await supabase
       .from("entries")
       .insert({
@@ -32,10 +37,13 @@ export async function POST(request) {
         question_text: "(transcribing…)",
         passage: "",
         correct_answer: typeof correctAnswer === "string" ? correctAnswer : "",
+        your_answer: typeof yourAnswer === "string" ? yourAnswer : "",
         tags: [],
         mistake_types: [],
         has_image: false,
         pending: true,
+        total_attempts: 1,
+        wrong_attempts: wasWrong ? 1 : 0,
       })
       .select()
       .single();

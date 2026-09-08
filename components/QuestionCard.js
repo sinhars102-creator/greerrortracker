@@ -649,9 +649,15 @@ export default function QuestionCard({
       )}
       {checked && (
         <>
-          <div style={{ fontSize: 13.5, fontWeight: 700, color: allCorrect ? "var(--sage)" : "var(--red)", marginBottom: 14 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: allCorrect ? "var(--sage)" : "var(--red)", marginBottom: entry.yourAnswer ? 4 : 14 }}>
             {allCorrect ? "✓ Correct" : "✗ Incorrect"}
           </div>
+          {entry.yourAnswer && (
+            <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14 }}>
+              Originally logged as: <span style={{ color: "var(--text)", fontWeight: 600 }}>{entry.yourAnswer}</span>
+              {" — compare against what you just picked to see if it's actually sunk in."}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: solutionError ? 8 : 0 }}>
             <button className="btn btn-primary" onClick={() => onFinish({ correct: allCorrect, selections, numericAnswers })}>Next question</button>
             {solutionVisible ? (

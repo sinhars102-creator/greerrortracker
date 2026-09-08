@@ -50,7 +50,14 @@ export async function beginCapture() {
 
 // Step 2 — called once the user has typed (or skipped) the correct answer.
 // This is when the screenshot is actually taken, uploaded, and transcribed.
-export async function finishCapture(correctAnswer) {
+// gotWrong (from the popup's checkbox, default true) means this is being
+// logged because the question was missed just now — the entry is created
+// already counting as a real wrong attempt, so it lands straight in the
+// Mistakes tier instead of waiting for a later in-app review to mark it.
+// yourAnswer records what was actually picked (only meaningful alongside
+// gotWrong) so a later repeat of the same wrong pick stands out instead of
+// just re-deriving "wrong" with no memory of which wrong answer it was.
+export async function finishCapture(correctAnswer, gotWrong = true, yourAnswer = "") {
   const { pendingCapture } = await chrome.storage.local.get(["pendingCapture"]);
   if (!pendingCapture) return { error: "Nothing pending" };
   const { windowId, section, subtype } = pendingCapture;
@@ -93,7 +100,7 @@ export async function finishCapture(correctAnswer) {
       res = await fetch(`${APP_API_BASE}/api/extension/capture`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ image, section, subtype, correctAnswer }),
+        body: JSON.stringify({ image, section, subtype, correctAnswer, gotWrong, yourAnswer }),
         signal: controller.signal,
       });
     } finally {

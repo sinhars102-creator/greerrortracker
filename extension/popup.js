@@ -8,12 +8,23 @@ const answerViewEl = document.getElementById("answer-view");
 const sectionPillsEl = document.getElementById("section-pills");
 const subtypePillsEl = document.getElementById("subtype-pills");
 const answerInput = document.getElementById("answer");
+const yourAnswerFieldEl = document.getElementById("your-answer-field");
+const yourAnswerInput = document.getElementById("your-answer");
+const gotWrongInput = document.getElementById("got-wrong");
 const answerStatusEl = document.getElementById("answer-status");
 const captureControlsEl = document.getElementById("capture-controls");
 const vocabControlsEl = document.getElementById("vocab-controls");
 const vocabWordsInput = document.getElementById("vocab-words");
 const vocabStatusEl = document.getElementById("vocab-status");
 const forceCancelEl = document.getElementById("force-cancel");
+
+// "Your answer" only matters for catching a repeated mistake, so it's
+// hidden while the "I got this wrong" box is unchecked (correct answers
+// have nothing to compare against).
+function updateYourAnswerVisibility() {
+  yourAnswerFieldEl.classList.toggle("hidden", !gotWrongInput.checked);
+}
+gotWrongInput.addEventListener("change", updateYourAnswerVisibility);
 
 function renderPills(container, options, current, onPick) {
   container.innerHTML = "";
@@ -50,6 +61,9 @@ async function render() {
     answerViewEl.classList.remove("hidden");
     const capturing = stored.pendingCapture.status === "capturing";
     answerInput.disabled = capturing;
+    yourAnswerInput.disabled = capturing;
+    gotWrongInput.disabled = capturing;
+    updateYourAnswerVisibility();
     document.getElementById("submit-answer").disabled = capturing;
     document.getElementById("skip").disabled = capturing;
     answerStatusEl.textContent = capturing ? "Capturing…" : "";
@@ -117,9 +131,14 @@ vocabWordsInput.addEventListener("keydown", (e) => {
 
 async function submit() {
   const correctAnswer = answerInput.value.trim();
+  const gotWrong = gotWrongInput.checked;
+  const yourAnswer = gotWrong ? yourAnswerInput.value.trim() : "";
   answerStatusEl.textContent = "Saving…";
-  const result = await finishCapture(correctAnswer);
+  const result = await finishCapture(correctAnswer, gotWrong, yourAnswer);
   answerInput.value = "";
+  yourAnswerInput.value = "";
+  gotWrongInput.checked = true;
+  updateYourAnswerVisibility();
   if (result.error) {
     answerStatusEl.textContent = result.error;
   }
@@ -129,6 +148,12 @@ async function submit() {
 document.getElementById("submit-answer").addEventListener("click", submit);
 document.getElementById("skip").addEventListener("click", () => submit());
 answerInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") submit();
+  if (e.key === "Escape") {
+    cancelCapture().then(render);
+  }
+});
+yourAnswerInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") submit();
   if (e.key === "Escape") {
     cancelCapture().then(render);
