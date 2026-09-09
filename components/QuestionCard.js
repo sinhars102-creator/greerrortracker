@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { blanksAreUsable } from "@/lib/extractionVersion";
 
 const letter = (i) => String.fromCharCode(65 + i);
+const formatSeconds = (totalSeconds) => `${String(Math.floor(totalSeconds / 60)).padStart(2, "0")}:${String(totalSeconds % 60).padStart(2, "0")}`;
 
 // Mirrors app/log/page.js's own copy — duplicated rather than imported so
 // this client component doesn't need to reach into that page's module.
@@ -101,14 +102,17 @@ export default function QuestionCard({
   // from 00:00 — same loadingBlanks gate as the countdown above so it
   // starts once the question is actually on screen, and freezes the moment
   // you check the answer rather than continuing to tick while you read the
-  // result/solution.
+  // result/solution. Reported up via onFinish so the parent can persist it
+  // as entry.lastTimeSpentSeconds (overwritten every check, so it always
+  // reflects the most recent attempt) — that's what makes "how long did
+  // this take" survive a reload/come back later, not just this render.
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   useEffect(() => {
     if (loadingBlanks || checked) return;
     const t = setTimeout(() => setElapsedSeconds((s) => s + 1), 1000);
     return () => clearTimeout(t);
   }, [elapsedSeconds, loadingBlanks, checked]);
-  const elapsedLabel = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:${String(elapsedSeconds % 60).padStart(2, "0")}`;
+  const elapsedLabel = formatSeconds(elapsedSeconds);
 
   const accent = entry.section === "Quant" ? "var(--quant)" : "var(--verbal)";
 
@@ -500,9 +504,16 @@ export default function QuestionCard({
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span className="pill" style={{ background: accent, color: "#0F1115" }}>{entry.section}</span>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>{entry.subtype}</span>
-          <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }} title={checked ? "Time spent before checking" : "Time spent so far"}>
-            ⏱ {elapsedLabel}
-          </span>
+          {!checked && (
+            <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }} title="Time spent so far">
+              ⏱ {elapsedLabel}
+            </span>
+          )}
+          {!checked && entry.lastTimeSpentSeconds != null && (
+            <span className="mono" style={{ fontSize: 11.5, color: "var(--muted)" }} title="How long the last attempt at this question took">
+              (last: {formatSeconds(entry.lastTimeSpentSeconds)})
+            </span>
+          )}
         </div>
         {confirmingDelete ? (
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -665,8 +676,20 @@ export default function QuestionCard({
       )}
       {checked && (
         <>
-          <div style={{ fontSize: 13.5, fontWeight: 700, color: allCorrect ? "var(--sage)" : "var(--red)", marginBottom: entry.yourAnswer ? 4 : 14 }}>
-            {allCorrect ? "✓ Correct" : "✗ Incorrect"}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: entry.yourAnswer ? 4 : 14 }}>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: allCorrect ? "var(--sage)" : "var(--red)" }}>
+              {allCorrect ? "✓ Correct" : "✗ Incorrect"}
+            </span>
+            <span
+              className="mono"
+              style={{
+                fontSize: 13, fontWeight: 700, color: "var(--amber)",
+                padding: "3px 9px", borderRadius: 999,
+                background: "rgba(232,163,61,0.16)", border: "1px solid var(--amber)",
+              }}
+            >
+              ⏱ {elapsedLabel}
+            </span>
           </div>
           {entry.yourAnswer && (
             <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14 }}>
@@ -675,7 +698,7 @@ export default function QuestionCard({
             </div>
           )}
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: solutionError ? 8 : 0 }}>
-            <button className="btn btn-primary" onClick={() => onFinish({ correct: allCorrect, selections, numericAnswers })}>Next question</button>
+            <button className="btn btn-primary" onClick={() => onFinish({ correct: allCorrect, selections, numericAnswers, elapsedSeconds })}>Next question</button>
             {solutionVisible ? (
               <button className="btn" onClick={() => setSolutionVisible(false)}>Hide solution</button>
             ) : (

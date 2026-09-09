@@ -280,6 +280,10 @@ function ReviewPageInner() {
   // nothing real in between — see the dueRetest comment below. Session-only,
   // worst case after a reload is one incidental back-to-back pair.
   const [lastShownWasRetest, setLastShownWasRetest] = useState(false);
+  // Set when saving an attempt (handleFinish) fails, so it's shown as a
+  // visible, retryable error instead of crashing the page as an unhandled
+  // promise rejection. Cleared on the next successful save.
+  const [finishError, setFinishError] = useState("");
   const [mistakeThreshold, setMistakeThreshold] = useState(2);
   const [priorityMixCount, setPriorityMixCount] = useState(40);
   const [loggedSinceDate, setLoggedSinceDate] = useState(() => loadLoggedSinceDate(initial.section));
@@ -496,10 +500,10 @@ function ReviewPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upcomingKey]);
 
-  const handleFinish = async ({ correct, selections, numericAnswers }) => {
+  const handleFinish = async ({ correct, selections, numericAnswers, elapsedSeconds }) => {
     const totalAttempts = (current.totalAttempts || 0) + 1;
     const wrongAttempts = (current.wrongAttempts || 0) + (correct ? 0 : 1);
-    const patch = { totalAttempts, wrongAttempts };
+    const patch = { totalAttempts, wrongAttempts, lastTimeSpentSeconds: elapsedSeconds };
 
     if (correct) {
       const nextCount = current.reviewCount + 1;
@@ -509,7 +513,19 @@ function ReviewPageInner() {
       Object.assign(patch, { reviewCount: 0, lastReviewed: todayISO(), nextReview: addDays(todayISO(), 1), mastered: false });
     }
 
-    await updateEntry(current.id, patch);
+    // This used to be an unguarded await — a failed save (e.g. a schema
+    // mismatch, or a dropped connection) threw as an unhandled promise
+    // rejection and crashed the whole page instead of just this attempt.
+    // Surface it and stop here so nothing is marked answered/advanced on
+    // top of data that was never actually saved; retrying "Check answer"
+    // is possible once whatever caused it is fixed.
+    try {
+      await updateEntry(current.id, patch);
+    } catch (e) {
+      setFinishError(e.message ? `Couldn't save this attempt — ${e.message}` : "Couldn't save this attempt. Try again.");
+      return;
+    }
+    setFinishError("");
     setAnsweredIds((prev) => new Set(prev).add(current.id));
     setPassedIds((prev) => [...prev, current.id]);
     setAnswersHistory((prev) => ({ ...prev, [current.id]: { selections, numericAnswers } }));
@@ -930,6 +946,11 @@ function ReviewPageInner() {
       {backSteps > 0 && (
         <div style={{ fontSize: 12.5, color: "var(--amber)", marginBottom: 10 }}>
           Reviewing a previous question — use Next above to return to where you left off. Checking or skipping here does not count as a new attempt.
+        </div>
+      )}
+      {finishError && (
+        <div style={{ fontSize: 12.5, color: "var(--red)", marginBottom: 10 }}>
+          {finishError}
         </div>
       )}
       <QuestionCard

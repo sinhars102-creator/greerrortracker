@@ -53,6 +53,7 @@ export default function PracticePage() {
   // Lazy initializer (not an effect) so this reads localStorage once on
   // mount without a setState-in-effect render cascade.
   const [savedProgress, setSavedProgress] = useState(() => ({ Quant: loadProgress("Quant"), Verbal: loadProgress("Verbal") }));
+  const [finishError, setFinishError] = useState("");
 
   const refresh = () => listEntries().then(setEntries);
   useEffect(() => { refresh(); }, []);
@@ -110,11 +111,22 @@ export default function PracticePage() {
 
   const handleSkip = () => setSession((s) => ({ ...s, index: s.index + 1 }));
 
-  const handleFinish = async ({ correct }) => {
+  const handleFinish = async ({ correct, elapsedSeconds }) => {
     const current = session.queue[session.index];
     const totalAttempts = (current.totalAttempts || 0) + 1;
     const wrongAttempts = (current.wrongAttempts || 0) + (correct ? 0 : 1);
-    patchEntry(current.id, { totalAttempts, wrongAttempts });
+    const patch = { totalAttempts, wrongAttempts, lastTimeSpentSeconds: elapsedSeconds };
+    // Unlike patchEntry's other callers here (blanks/solution caching,
+    // where losing a write just means a re-fetch next time), a failed save
+    // of the attempt itself should be visible rather than silently
+    // swallowed — it's real practice-stat data, not a cache.
+    try {
+      await updateEntry(current.id, patch);
+      setEntries((prev) => prev.map((e) => (e.id === current.id ? { ...e, ...patch } : e)));
+      setFinishError("");
+    } catch (e) {
+      setFinishError(e.message ? `Couldn't save that attempt — ${e.message}` : "Couldn't save that attempt.");
+    }
 
     setSession((s) => {
       const nextStreak = correct ? s.streak + 1 : 0;
@@ -199,6 +211,11 @@ export default function PracticePage() {
         <button className="btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={endSession}>End session</button>
       </div>
 
+      {finishError && (
+        <div style={{ fontSize: 12.5, color: "var(--red)", marginBottom: 10 }}>
+          {finishError}
+        </div>
+      )}
       <QuestionCard
         key={current.id}
         entry={current}
