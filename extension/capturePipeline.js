@@ -50,14 +50,16 @@ export async function beginCapture() {
 
 // Step 2 — called once the user has typed (or skipped) the correct answer.
 // This is when the screenshot is actually taken, uploaded, and transcribed.
-// gotWrong (from the popup's checkbox, default true) means this is being
-// logged because the question was missed just now — the entry is created
-// already counting as a real wrong attempt, so it lands straight in the
-// Mistakes tier instead of waiting for a later in-app review to mark it.
-// yourAnswer records what was actually picked (only meaningful alongside
-// gotWrong) so a later repeat of the same wrong pick stands out instead of
-// just re-deriving "wrong" with no memory of which wrong answer it was.
-export async function finishCapture(correctAnswer, gotWrong = true, yourAnswer = "") {
+// gotWrong (from the popup's checkbox, default false — most captures are
+// worth reviewing but not every one was actually missed) means this is
+// being logged because the question was missed just now — the entry is
+// created already counting as a real wrong attempt, so it lands straight
+// in the Mistakes tier instead of waiting for a later in-app review to
+// mark it. yourAnswer records what was actually picked (only meaningful
+// alongside gotWrong) so a later repeat of the same wrong pick stands out
+// instead of just re-deriving "wrong" with no memory of which wrong answer
+// it was.
+export async function finishCapture(correctAnswer, gotWrong = false, yourAnswer = "") {
   const { pendingCapture } = await chrome.storage.local.get(["pendingCapture"]);
   if (!pendingCapture) return { error: "Nothing pending" };
   const { windowId, section, subtype } = pendingCapture;
@@ -115,8 +117,11 @@ export async function finishCapture(correctAnswer, gotWrong = true, yourAnswer =
   }
 
   await chrome.storage.local.remove("pendingCapture");
-  notify("Logged", result.questionText.slice(0, 120));
-  return { ok: true, questionText: result.questionText };
+  // Transcription now finishes server-side after this response (see the
+  // route's use of after()) so the popup isn't blocked on it — there's no
+  // questionText back yet to show in the notification.
+  notify("Logged", "Transcribing in the background…");
+  return { ok: true, entryId: result.entryId };
 }
 
 export async function cancelCapture() {

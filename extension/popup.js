@@ -137,7 +137,7 @@ async function submit() {
   const result = await finishCapture(correctAnswer, gotWrong, yourAnswer);
   answerInput.value = "";
   yourAnswerInput.value = "";
-  gotWrongInput.checked = true;
+  gotWrongInput.checked = false;
   updateYourAnswerVisibility();
   if (result.error) {
     answerStatusEl.textContent = result.error;

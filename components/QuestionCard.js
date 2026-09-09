@@ -97,6 +97,19 @@ export default function QuestionCard({
     return () => clearTimeout(t);
   }, [secondsLeft, loadingBlanks]);
 
+  // Stopwatch showing how long you've spent on this question, counting up
+  // from 00:00 — same loadingBlanks gate as the countdown above so it
+  // starts once the question is actually on screen, and freezes the moment
+  // you check the answer rather than continuing to tick while you read the
+  // result/solution.
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  useEffect(() => {
+    if (loadingBlanks || checked) return;
+    const t = setTimeout(() => setElapsedSeconds((s) => s + 1), 1000);
+    return () => clearTimeout(t);
+  }, [elapsedSeconds, loadingBlanks, checked]);
+  const elapsedLabel = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:${String(elapsedSeconds % 60).padStart(2, "0")}`;
+
   const accent = entry.section === "Quant" ? "var(--quant)" : "var(--verbal)";
 
   const extractOptions = async (signedUrlOverride) => {
@@ -484,9 +497,12 @@ export default function QuestionCard({
   return (
     <div className="card" style={{ padding: 18, borderLeft: `3px solid ${accent}` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span className="pill" style={{ background: accent, color: "#0F1115" }}>{entry.section}</span>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>{entry.subtype}</span>
+          <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }} title={checked ? "Time spent before checking" : "Time spent so far"}>
+            ⏱ {elapsedLabel}
+          </span>
         </div>
         {confirmingDelete ? (
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

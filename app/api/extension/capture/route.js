@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { extractQuestionFromImage, QUANT_SUBTYPES, VERBAL_SUBTYPES } from "@/lib/anthropic";
 import { authenticateExtensionRequest } from "@/lib/extensionAuth";
 
@@ -23,11 +23,12 @@ export async function POST(request) {
     }
 
     // 1. Create the entry immediately, pending transcription. gotWrong
-    // (default true — this is a mistake tracker, most captures are misses)
-    // records this as a real first attempt right away, wrong or not, so a
-    // missed question lands straight in the Mistakes tier without waiting
-    // on a later in-app review to mark it wrong.
-    const wasWrong = gotWrong !== false;
+    // (default false — only the popup's checkbox opts an entry into
+    // counting as a real wrong attempt) records this as a real first
+    // attempt right away, wrong or not, so a missed question lands
+    // straight in the Mistakes tier without waiting on a later in-app
+    // review to mark it wrong.
+    const wasWrong = gotWrong === true;
     const { data: row, error: insertErr } = await supabase
       .from("entries")
       .insert({
@@ -65,28 +66,33 @@ export async function POST(request) {
       // Screenshot upload is best-effort; the entry itself already exists.
     }
 
-    // 3. Transcribe the question. Never leave the entry stuck pending.
+    // 3. Transcribe the question — by far the slowest step (a full Claude
+    // vision call, worse on Reading Comprehension passages), which used to
+    // make the extension popup sit on "Capturing…" for the whole thing.
+    // Deferred to run after the response is sent (same "save immediately,
+    // enrich in background" pattern as the web app's own log flow, see
+    // app/log/page.js) so the popup can close the moment the entry and its
+    // screenshot exist — the entry just carries "(transcribing…)" until
+    // this finishes and fills it in.
     const needsPassage = subtype === "Reading Comprehension";
-    let questionText = "(see screenshot)";
-    let passage = "";
-    let extractionFailed = false;
-    try {
-      const result = await extractQuestionFromImage({ image, subtype, needsPassage });
-      if (result.error) {
-        console.error("[extension/capture] extraction returned error:", result.error);
-        extractionFailed = true;
-      } else {
-        questionText = result.questionText || "(see screenshot)";
-        passage = result.passage || "";
+    after(async () => {
+      let questionText = "(see screenshot)";
+      let passage = "";
+      try {
+        const result = await extractQuestionFromImage({ image, subtype, needsPassage });
+        if (result.error) {
+          console.error("[extension/capture] extraction returned error:", result.error);
+        } else {
+          questionText = result.questionText || "(see screenshot)";
+          passage = result.passage || "";
+        }
+      } catch (extractErr) {
+        console.error("[extension/capture] extraction threw:", extractErr);
       }
-    } catch (extractErr) {
-      console.error("[extension/capture] extraction threw:", extractErr);
-      extractionFailed = true;
-    }
+      await supabase.from("entries").update({ question_text: questionText, passage, pending: false }).eq("id", row.id);
+    });
 
-    await supabase.from("entries").update({ question_text: questionText, passage, pending: false }).eq("id", row.id);
-
-    return NextResponse.json({ ok: true, entryId: row.id, questionText, extractionFailed });
+    return NextResponse.json({ ok: true, entryId: row.id, pending: true });
   } catch (e) {
     return NextResponse.json({ error: e.message || "unknown error" }, { status: 500 });
   }
