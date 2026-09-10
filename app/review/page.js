@@ -388,10 +388,16 @@ function ReviewPageInner() {
     () => filterMoreThanMistakes(scopedBySection, mistakeThreshold).length,
     [scopedBySection, mistakeThreshold]
   );
-  const priorityMixCountAvailable = useMemo(
-    () => filterPriorityMix(scopedBySection, priorityMixCount).length,
-    [scopedBySection, priorityMixCount]
+  // The true, uncapped pool size — not capped at priorityMixCount, so it
+  // actually tells you whether there's enough in the pool for rotation to
+  // matter, instead of always reading back the selected batch size once
+  // the pool reaches it (filterPriorityMix(..., N) alone always maxes out
+  // at N regardless of how much bigger the real pool is).
+  const priorityMixTotalAvailable = useMemo(
+    () => filterPriorityMix(scopedBySection, Infinity).length,
+    [scopedBySection]
   );
+  const priorityMixCountAvailable = Math.min(priorityMixTotalAvailable, priorityMixCount);
   const loggedSinceCount = scopedBySection.length;
   const verbalSubtypeBreakdown = useMemo(() => {
     if (section !== "Verbal") return [];
@@ -845,7 +851,7 @@ function ReviewPageInner() {
                     {PRIORITY_MIX_COUNT_OPTIONS.map((n) => <option key={n} value={n}>{n} questions</option>)}
                   </select>
                   <span className="mono" style={{ fontSize: 14, color: "var(--muted)", marginLeft: "auto" }}>
-                    {priorityMixCountAvailable} available
+                    {priorityMixTotalAvailable} in pool
                   </span>
                 </div>
                 <button
