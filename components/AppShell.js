@@ -267,7 +267,7 @@ export default function AppShell({ children }) {
 
   return (
     <div style={{ minHeight: "100vh" }}>
-      <div style={{ maxWidth: 980, margin: "0 auto", padding: "28px 20px 60px" }}>
+      <div style={{ maxWidth: 1600, margin: "0 auto", padding: "28px 32px 60px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", borderBottom: "1px solid var(--border)", paddingBottom: 16, marginBottom: 22 }}>
           <div>
             <div style={{ fontSize: 11, color: "var(--faint)", letterSpacing: ".12em", textTransform: "uppercase", marginBottom: 4 }}>GRE · Error Ledger</div>
