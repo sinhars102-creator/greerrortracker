@@ -503,7 +503,8 @@ function ReviewPageInner() {
   const handleFinish = async ({ correct, selections, numericAnswers, elapsedSeconds }) => {
     const totalAttempts = (current.totalAttempts || 0) + 1;
     const wrongAttempts = (current.wrongAttempts || 0) + (correct ? 0 : 1);
-    const patch = { totalAttempts, wrongAttempts, lastTimeSpentSeconds: elapsedSeconds };
+    const attemptHistory = [...(current.attemptHistory || []), { at: new Date().toISOString(), correct }];
+    const patch = { totalAttempts, wrongAttempts, lastTimeSpentSeconds: elapsedSeconds, attemptHistory };
 
     if (correct) {
       const nextCount = current.reviewCount + 1;

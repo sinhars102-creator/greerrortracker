@@ -62,6 +62,7 @@ export default function QuestionCard({
   const [selections, setSelections] = useState(initialSelections || {});
   const [numericAnswers, setNumericAnswers] = useState(initialNumericAnswers || {});
   const [checked, setChecked] = useState(initialChecked);
+  const [checkedAt, setCheckedAt] = useState(null);
 
   const [solution, setSolution] = useState(entry.solution || null);
   const [solutionVisible, setSolutionVisible] = useState(false);
@@ -231,6 +232,25 @@ export default function QuestionCard({
     b.numericAnswer ? !!(numericAnswers[bi] || "").trim() : (selections[bi] || []).length > 0
   ));
   const allCorrect = checked && blanks && blanks.every((b, bi) => isBlankCorrect(b, bi));
+
+  // Per-question attempt history to show right after checking. entry's own
+  // totalAttempts/wrongAttempts don't include this attempt yet — the actual
+  // DB write happens later, on "Next question" (see the parent's
+  // handleFinish) — except when this card is showing a past answer via
+  // "Previous" (initialChecked), where that write already happened and the
+  // entry already reflects it. So the "+1 for this attempt" only applies to
+  // a fresh check, not a historical replay.
+  const includesThisAttempt = checked && !initialChecked;
+  const displayTotalAttempts = (entry.totalAttempts || 0) + (includesThisAttempt ? 1 : 0);
+  const displayWrongAttempts = (entry.wrongAttempts || 0) + (includesThisAttempt && !allCorrect ? 1 : 0);
+  const displayCorrectAttempts = displayTotalAttempts - displayWrongAttempts;
+  // checkedAt is stamped once, right when "Check answer" is clicked (see
+  // its onClick below) — read here rather than calling new Date() inline so
+  // the synthetic "just now" row doesn't drift to a different timestamp on
+  // every re-render (e.g. toggling "Show solution").
+  const displayAttemptHistory = includesThisAttempt
+    ? [...(entry.attemptHistory || []), { at: checkedAt || new Date().toISOString(), correct: allCorrect }]
+    : (entry.attemptHistory || []);
 
   const optionColors = (b, bi, i) => {
     const sel = selections[bi] || [];
@@ -665,7 +685,7 @@ export default function QuestionCard({
 
       {!checked && (
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <button className="btn btn-primary" onClick={() => setChecked(true)} disabled={!allSelected || secondsLeft > 0}>
+          <button className="btn btn-primary" onClick={() => { setCheckedAt(new Date().toISOString()); setChecked(true); }} disabled={!allSelected || secondsLeft > 0}>
             {secondsLeft > 0 ? `Check answer (${secondsLeft}s)` : "Check answer"}
           </button>
           <button className="btn" onClick={onSkip}>Skip</button>
@@ -676,7 +696,7 @@ export default function QuestionCard({
       )}
       {checked && (
         <>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: entry.yourAnswer ? 4 : 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
             <span style={{ fontSize: 13.5, fontWeight: 700, color: allCorrect ? "var(--sage)" : "var(--red)" }}>
               {allCorrect ? "✓ Correct" : "✗ Incorrect"}
             </span>
@@ -691,6 +711,41 @@ export default function QuestionCard({
               ⏱ {elapsedLabel}
             </span>
           </div>
+          <table style={{ borderCollapse: "collapse", marginBottom: 8, fontSize: 12.5 }}>
+            <thead>
+              <tr>
+                {["Attempted", "Right", "Wrong"].map((h) => (
+                  <th key={h} style={{ textAlign: "left", fontWeight: 500, color: "var(--muted)", padding: "2px 14px 2px 0" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ fontWeight: 700, color: "var(--text)", padding: "2px 14px 2px 0" }}>{displayTotalAttempts}</td>
+                <td style={{ fontWeight: 700, color: "var(--sage)", padding: "2px 14px 2px 0" }}>{displayCorrectAttempts}</td>
+                <td style={{ fontWeight: 700, color: "var(--red)", padding: "2px 14px 2px 0" }}>{displayWrongAttempts}</td>
+              </tr>
+            </tbody>
+          </table>
+          {displayAttemptHistory.length > 0 && (
+            <details style={{ marginBottom: 14 }}>
+              <summary style={{ cursor: "pointer", fontSize: 12.5, color: "var(--muted)" }}>
+                When you got this right/wrong ({displayAttemptHistory.length})
+              </summary>
+              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
+                {[...displayAttemptHistory].reverse().map((a, i) => (
+                  <div key={i} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", gap: 14 }}>
+                    <span style={{ color: "var(--muted)" }}>
+                      {new Date(a.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                    </span>
+                    <span style={{ color: a.correct ? "var(--sage)" : "var(--red)", fontWeight: 600 }}>
+                      {a.correct ? "✓ Right" : "✗ Wrong"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
           {entry.yourAnswer && (
             <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14 }}>
               Originally logged as: <span style={{ color: "var(--text)", fontWeight: 600 }}>{entry.yourAnswer}</span>

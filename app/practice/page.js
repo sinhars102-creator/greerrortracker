@@ -115,7 +115,8 @@ export default function PracticePage() {
     const current = session.queue[session.index];
     const totalAttempts = (current.totalAttempts || 0) + 1;
     const wrongAttempts = (current.wrongAttempts || 0) + (correct ? 0 : 1);
-    const patch = { totalAttempts, wrongAttempts, lastTimeSpentSeconds: elapsedSeconds };
+    const attemptHistory = [...(current.attemptHistory || []), { at: new Date().toISOString(), correct }];
+    const patch = { totalAttempts, wrongAttempts, lastTimeSpentSeconds: elapsedSeconds, attemptHistory };
     // Unlike patchEntry's other callers here (blanks/solution caching,
     // where losing a write just means a re-fetch next time), a failed save
     // of the attempt itself should be visible rather than silently

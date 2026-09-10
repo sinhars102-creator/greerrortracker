@@ -34,6 +34,7 @@ create table if not exists entries (
   total_attempts int not null default 0,
   wrong_attempts int not null default 0,
   last_time_spent_seconds int, -- how long the most recent Review/Practice attempt took (stopwatch on QuestionCard, frozen at "Check answer"); null until first checked, overwritten every check so it always reflects the latest attempt
+  attempt_history jsonb not null default '[]'::jsonb, -- append-only log of every Review/Practice check: [{ at: ISO timestamp, correct: boolean }, ...], oldest first. Powers the "when did I get this right/wrong" dropdown; attempts made before this column existed aren't in it (no way to backfill dates that were never recorded)
   pending boolean not null default false,
   rc_group_id uuid, -- shared across entries logged together as one Reading Comprehension batch (same passage), so they can be practiced in sequence
   rc_group_order int, -- position of this question within its rc_group_id batch
@@ -63,6 +64,8 @@ update entries set wrong_attempts_at_star = wrong_attempts where starred = true 
 alter table entries add column if not exists relook boolean not null default false;
 -- for installs that already ran the create table above before the per-question stopwatch existed
 alter table entries add column if not exists last_time_spent_seconds int;
+-- for installs that already ran the create table above before the per-attempt history existed
+alter table entries add column if not exists attempt_history jsonb not null default '[]'::jsonb;
 
 create index if not exists entries_user_id_idx on entries(user_id);
 create index if not exists entries_next_review_idx on entries(user_id, next_review) where not mastered;
