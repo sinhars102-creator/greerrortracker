@@ -221,6 +221,24 @@ function saveLoggedToDate(section, date) {
   } catch { /* storage full/unavailable — pick just won't be remembered */ }
 }
 
+// Priority Set's ranked pool is static from one "Start" click to the
+// next — nothing about a question changes just because you answered it —
+// so always starting from position 0 handed back the same top-N batch
+// every time. This cursor remembers how far through that pool you'd
+// gotten, per section, so the next batch picks up from there instead
+// (filterPriorityMix wraps it into the ranking, see lib/practiceFilters.js)
+// — walking through the whole pool over successive batches rather than
+// looping the same N forever.
+function priorityMixCursorKey(section) { return `review_priority_mix_cursor_${section}`; }
+function loadPriorityMixCursor(section) {
+  if (typeof window === "undefined") return 0;
+  try { return parseInt(localStorage.getItem(priorityMixCursorKey(section)), 10) || 0; } catch { return 0; }
+}
+function savePriorityMixCursor(section, n) {
+  if (typeof window === "undefined") return;
+  try { localStorage.setItem(priorityMixCursorKey(section), String(n)); } catch {}
+}
+
 // A Dashboard deep link always wins and starts a fresh session. Otherwise,
 // only the section's "active" (currently-live, not explicitly paused)
 // session auto-resumes — this is what makes a plain refresh mid-review
@@ -613,6 +631,20 @@ function ReviewPageInner() {
     setStarted(true);
   };
 
+  // Bakes the current pool-walk position into the source itself (rather
+  // than a separate piece of state) so each lap is its own distinct,
+  // independently-resumable session — and immediately advances the
+  // persisted cursor so the *next* "Start" click continues from here, not
+  // from this same spot again. Only genuinely new laps advance it:
+  // resuming an already-paused priorityMix session (its offset is already
+  // baked into the source stored in localStorage) goes through
+  // startWithSource directly instead of this.
+  const startPriorityMix = (limit) => {
+    const offset = loadPriorityMixCursor(section);
+    savePriorityMixCursor(section, offset + limit);
+    startWithSource({ type: "priorityMix", limit, offset });
+  };
+
   // Pauses, doesn't discard — the in-progress session (source/answeredIds/
   // skippedIds) stays saved in localStorage so it can be resumed later from
   // the setup screen's resume list. Clearing the "active" pointer (but not
@@ -820,7 +852,7 @@ function ReviewPageInner() {
                   className="btn btn-primary"
                   style={{ width: "100%", marginTop: 12 }}
                   disabled={!priorityMixCountAvailable}
-                  onClick={() => priorityMixCountAvailable && startWithSource({ type: "priorityMix", limit: priorityMixCount })}
+                  onClick={() => priorityMixCountAvailable && startPriorityMix(priorityMixCount)}
                 >
                   Start ({priorityMixCountAvailable})
                 </button>
