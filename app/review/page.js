@@ -398,6 +398,12 @@ function ReviewPageInner() {
     [scopedBySection]
   );
   const priorityMixCountAvailable = Math.min(priorityMixTotalAvailable, priorityMixCount);
+  // Plain read (not memoized) so it reflects the latest saved cursor every
+  // render — cheap, and this screen only re-renders on real state changes
+  // (e.g. landing here via "Back to setup"), not on every keystroke.
+  // Surfaced here so where the next batch starts is actually visible,
+  // instead of trusting the rotation to work invisibly.
+  const priorityMixCursor = loadPriorityMixCursor(section);
   const loggedSinceCount = scopedBySection.length;
   const verbalSubtypeBreakdown = useMemo(() => {
     if (section !== "Verbal") return [];
@@ -853,6 +859,9 @@ function ReviewPageInner() {
                   <span className="mono" style={{ fontSize: 14, color: "var(--muted)", marginLeft: "auto" }}>
                     {priorityMixTotalAvailable} in pool
                   </span>
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 6 }}>
+                  Next batch starts at #{(priorityMixCursor % Math.max(priorityMixTotalAvailable, 1)) + 1} in the ranked pool.
                 </div>
                 <button
                   className="btn btn-primary"
