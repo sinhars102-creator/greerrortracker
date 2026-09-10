@@ -117,6 +117,10 @@ export default function PracticePage() {
     const wrongAttempts = (current.wrongAttempts || 0) + (correct ? 0 : 1);
     const attemptHistory = [...(current.attemptHistory || []), { at: new Date().toISOString(), correct }];
     const patch = { totalAttempts, wrongAttempts, lastTimeSpentSeconds: elapsedSeconds, attemptHistory };
+    // Practice has no short/medium/long retest loop (that's Review-only),
+    // so it can never set retestCleared true — but a fresh mistake here
+    // should still un-clear a question that loop had previously mastered.
+    if (!correct) patch.retestCleared = false;
     // Unlike patchEntry's other callers here (blanks/solution caching,
     // where losing a write just means a re-fetch next time), a failed save
     // of the attempt itself should be visible rather than silently

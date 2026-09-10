@@ -35,6 +35,7 @@ create table if not exists entries (
   wrong_attempts int not null default 0,
   last_time_spent_seconds int, -- how long the most recent Review/Practice attempt took (stopwatch on QuestionCard, frozen at "Check answer"); null until first checked, overwritten every check so it always reflects the latest attempt
   attempt_history jsonb not null default '[]'::jsonb, -- append-only log of every Review/Practice check: [{ at: ISO timestamp, correct: boolean }, ...], oldest first. Powers the "when did I get this right/wrong" dropdown; attempts made before this column existed aren't in it (no way to backfill dates that were never recorded)
+  retest_cleared boolean not null default false, -- set once the short/medium/long in-session retest loop (app/review/page.js) is passed in full; sorts the Mistakes tier/Priority Set to the back so a mastered-but-still-wrongAttempts>0 question doesn't keep crowding out genuinely unresolved ones. Reset to false on any subsequent wrong answer, in Review or Practice
   pending boolean not null default false,
   rc_group_id uuid, -- shared across entries logged together as one Reading Comprehension batch (same passage), so they can be practiced in sequence
   rc_group_order int, -- position of this question within its rc_group_id batch
@@ -66,6 +67,8 @@ alter table entries add column if not exists relook boolean not null default fal
 alter table entries add column if not exists last_time_spent_seconds int;
 -- for installs that already ran the create table above before the per-attempt history existed
 alter table entries add column if not exists attempt_history jsonb not null default '[]'::jsonb;
+-- for installs that already ran the create table above before retest-cleared tracking existed
+alter table entries add column if not exists retest_cleared boolean not null default false;
 
 create index if not exists entries_user_id_idx on entries(user_id);
 create index if not exists entries_next_review_idx on entries(user_id, next_review) where not mastered;

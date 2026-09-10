@@ -506,6 +506,18 @@ function ReviewPageInner() {
     const attemptHistory = [...(current.attemptHistory || []), { at: new Date().toISOString(), correct }];
     const patch = { totalAttempts, wrongAttempts, lastTimeSpentSeconds: elapsedSeconds, attemptHistory };
 
+    // retestCleared sorts the Mistakes tier/Priority Set to the back (see
+    // practiceFilters) so a question you've actually mastered through the
+    // full short/medium/long loop stops crowding out genuinely unresolved
+    // mistakes just because its lifetime wrongAttempts never decreases. Any
+    // wrong answer un-clears it again; only passing "long" sets it.
+    const alreadyPending = retestPending.find((r) => r.id === current.id);
+    if (!correct) {
+      patch.retestCleared = false;
+    } else if (alreadyPending && alreadyPending.stage === RETEST_STAGE_ORDER[RETEST_STAGE_ORDER.length - 1]) {
+      patch.retestCleared = true;
+    }
+
     if (correct) {
       const nextCount = current.reviewCount + 1;
       const interval = INTERVALS[Math.min(nextCount - 1, INTERVALS.length - 1)];
